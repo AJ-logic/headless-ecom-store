@@ -9,6 +9,10 @@
     "email": "maxvien@gmail.com",
     "url": "https://github.com/maxvien"
   },
+  "volta": {
+    "node": "18.20.7",
+    "npm": "10.8.2"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

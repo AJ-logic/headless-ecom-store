@@ -2,7 +2,6 @@
 
 A **[Shopping Cart](https://github.com/Maxvien/next-shopify-storefront)** built with [TypeScript](https://www.typescriptlang.org), [Tailwind CSS](https://tailwindcss.com), [Headless UI](https://headlessui.com), [Next.js](https://nextjs.org), [React.js](https://react.dev), [Shopify Hydrogen React](https://shopify.dev/docs/api/hydrogen-react),... and [Shopify Storefront GraphQL API](https://shopify.dev/docs/api/storefront).
 
-
 ![Next Shopify Storefront - GitHub Repo Stars](https://img.shields.io/github/stars/maxvien/next-shopify-storefront?label=Stars)
 ![Next Shopify Storefront - GitHub forks](https://img.shields.io/github/forks/maxvien/next-shopify-storefront?label=Forks)
 ![Next Shopify Storefront - Started Years](https://img.shields.io/badge/Since-2019-blue?style=flat)
@@ -33,7 +32,11 @@ Clone the source code into your computer.
 git clone https://github.com/maxvien/next-shopify-storefront.git
 ```
 
-Install the project's dependencies.
+**This project was developed with Node 18 and NPM 10.**<br>
+
+To set up a compatible environment, please download [Volta](https://github.com/volta-cli/volta) and run `volta setup`.
+
+Then, install the project's dependencies.
 
 ```bash
 npm install
