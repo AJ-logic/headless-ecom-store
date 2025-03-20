@@ -6,29 +6,17 @@ A **[Shopping Cart](https://github.com/Maxvien/next-shopify-storefront)** built 
 ![Next Shopify Storefront - GitHub forks](https://img.shields.io/github/forks/maxvien/next-shopify-storefront?label=Forks)
 ![Next Shopify Storefront - Started Years](https://img.shields.io/badge/Since-2019-blue?style=flat)
 
-## Tutorials
-
-- [How Do I Organize a Sustainable Next.js Project?](https://github.com/Maxvien/next-shopify-storefront/issues/68)
-- [How Do I Handle Typesafe Modular Data Fetching in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/69)
-- [How Do I Interact Safely with GraphQL API in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/70)
-- [How Do I Implement Dynamic Variant Selector for Shopify in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/71)
-
 ## Experience
 
-These are my experiences when I have been working on this project:
+When I started this project, I had no idea how complex building a storefront could be. But step by step, I figured it out.
 
-- Designing & Building the [Storefront](https://github.com/maxvien/next-shopify-storefront) from Scratch.
-- Creating [Next Utilities](https://www.npmjs.com/package/@maxvien/next) for Type-safe Modular Data Fetching.
-- Creating [Shopify Utilities](https://www.npmjs.com/package/@maxvien/shopify) to Simplify Variant Selecting.
-- Using [GraphQL Zeus](https://github.com/graphql-editor/graphql-zeus) to Interact with Storefront API.
-- Using [Shopify Hydrogen](https://shopify.dev/docs/custom-storefronts/hydrogen-react) to Implement Storefront Features.
-- Using [Tailwind CSS](https://tailwindcss.com/) & [Headless UI](https://headlessui.com/) to Build the Storefront UI.
-- Using [Next.js](https://nextjs.org/) for Incremental Static Regeneration.
-- Using [Next SEO](https://www.npmjs.com/package/next-seo) to Implement Search Engine Optimization.
-- Using [TypeScript](https://www.typescriptlang.org/) to Safely Create React Hooks, and Components.
-- Using [React Use](https://github.com/streamich/react-use) Hooks to Speed Up Component Development.
-- Using [Swiper](https://swiperjs.com/) to Create Beautiful, Touchable, Responsive Sliders.
-- Using [ESlint](https://eslint.org/), [Prettier](https://prettier.io/) to Follow Next.js Best Practices.
+I designed and built everything from scratch—structuring data, styling components, making sure everything loads fast. I used [GraphQL Zeus](https://github.com/graphql-editor/graphql-zeus) to talk to [Shopify’s GraphQL API](https://shopify.dev/docs/api/storefront), [Shopify Hydrogen](https://shopify.dev/docs/custom-storefronts/hydrogen-react) to power the storefront, and [Next.js](https://nextjs.org) for performance.
+
+[Tailwind CSS](https://tailwindcss.com/) and [Headless UI](https://headlessui.com/) made styling smooth. [TypeScript](https://www.typescriptlang.org/) kept everything safe and predictable. [React Use](https://github.com/streamich/react-use) Hooks sped up development. I even built [Shopify Utilities](https://www.npmjs.com/package/@maxvien/shopify) to make selecting product variants easier.
+
+Then came [SEO](https://www.npmjs.com/package/next-seo), best practices, and refining the user experience. [Swiper](https://swiperjs.com/) made touch interactions feel natural. [ESlint](https://eslint.org/) and [Prettier](https://prettier.io/) kept the code clean.
+
+It was a process of learning, breaking things, fixing them, and refining. And in the end, it wasn’t just about building a store—it was about building something that works beautifully.
 
 If you like this project, hit the **STAR** button to bookmark it ⭐️
 
@@ -107,6 +95,13 @@ To speed up your productivity, you can install these extensions:
 - [Visual Studio IntelliCode](https://marketplace.visualstudio.com/items?itemName=VisualStudioExptTeam.vscodeintellicode)
 - [Tailwind CSS IntelliSense](https://marketplace.visualstudio.com/items?itemName=bradlc.vscode-tailwindcss)
 - [PostCSS Language Support](https://marketplace.visualstudio.com/items?itemName=csstools.postcss)
+
+## Tutorials
+
+- [How Do I Organize a Sustainable Next.js Project?](https://github.com/Maxvien/next-shopify-storefront/issues/68)
+- [How Do I Handle Typesafe Modular Data Fetching in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/69)
+- [How Do I Interact Safely with GraphQL API in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/70)
+- [How Do I Implement Dynamic Variant Selector for Shopify in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/71)
 
 ## Related Projects
 
