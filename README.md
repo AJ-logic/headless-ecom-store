@@ -1,10 +1,6 @@
-# 🛍 Next Shopify Storefront
+# Headless Ecommerce Storefront
 
-A **[Shopping Cart](https://github.com/Maxvien/next-shopify-storefront)** built with [TypeScript](https://www.typescriptlang.org), [Tailwind CSS](https://tailwindcss.com), [Headless UI](https://headlessui.com), [Next.js](https://nextjs.org), [React.js](https://react.dev), [Shopify Hydrogen React](https://shopify.dev/docs/api/hydrogen-react),... and [Shopify Storefront GraphQL API](https://shopify.dev/docs/api/storefront).
-
-![Next Shopify Storefront - GitHub Repo Stars](https://img.shields.io/github/stars/maxvien/next-shopify-storefront?label=Stars)
-![Next Shopify Storefront - GitHub forks](https://img.shields.io/github/forks/maxvien/next-shopify-storefront?label=Forks)
-![Next Shopify Storefront - Started Years](https://img.shields.io/badge/Since-2019-blue?style=flat)
+A Shopping Cart built with [TypeScript](https://www.typescriptlang.org), [Tailwind CSS](https://tailwindcss.com), [Headless UI](https://headlessui.com), [Next.js](https://nextjs.org), [React.js](https://react.dev), [Shopify Hydrogen React](https://shopify.dev/docs/api/hydrogen-react),... and [Shopify Storefront GraphQL API](https://shopify.dev/docs/api/storefront).
 
 ## Experience
 
@@ -99,17 +95,4 @@ To speed up your productivity, you can install these extensions:
 - [Visual Studio IntelliCode](https://marketplace.visualstudio.com/items?itemName=VisualStudioExptTeam.vscodeintellicode)
 - [Tailwind CSS IntelliSense](https://marketplace.visualstudio.com/items?itemName=bradlc.vscode-tailwindcss)
 - [PostCSS Language Support](https://marketplace.visualstudio.com/items?itemName=csstools.postcss)
-
-## Tutorials
-
-- [How Do I Organize a Sustainable Next.js Project?](https://github.com/Maxvien/next-shopify-storefront/issues/68)
-- [How Do I Handle Typesafe Modular Data Fetching in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/69)
-- [How Do I Interact Safely with GraphQL API in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/70)
-- [How Do I Implement Dynamic Variant Selector for Shopify in Next.js?](https://github.com/Maxvien/next-shopify-storefront/issues/71)
-
-## Related Projects
-
-- **[Shopify Data Faker](https://github.com/Maxvien/shopify-data-faker)** • A Shopify development tool for generating dummy store data.
-- **[Bootstrap Shopify Theme](https://github.com/Maxvien/bootstrap-shopify-theme/tree/v1)** • A free Shopify Theme built with Bootstrap, BEM, Liquid, Sass, ESNext, Theme Tools, ... and Webpack.
-- **[Next Shopify Storefront (v2)](https://github.com/Maxvien/next-shopify-storefront/tree/v2)** • A Shopping Cart built with TypeScript, Emotion, Next.js, React.js, React Query, Shopify Storefront GraphQL API, ... and Material UI.
-- **[Next Shopify Storefront (v1)](https://github.com/Maxvien/next-shopify-storefront/tree/v1)** • A Shopping Cart built with TypeScript, NextJS, React, Redux, Apollo Client, Shopify Storefront GraphQL API, ... and Material UI.
+- 

@@ -1,18 +1,9 @@
 {
-  "name": "next-shopify-storefront",
-  "description": "A Shopping Cart built with TypeScript, Tailwind CSS, Headless UI, Next.js, React.js, Shopify Hydrogen React,... and Shopify Storefront GraphQL API.",
-  "repository": "https://github.com/maxvien/next-shopify-storefront.git",
+  "name": "headless-ecom-store",
+  "description": "A modern, decoupled e-commerce application built with Next.js and powered by a headless CMS(Shopify Storefront API). This project demonstrates a scalable architecture for online stores using dynamic product pages, card functionality, and checkout via Stripe or Shopify.",
+  "repository": "https://github.com/AJ-logic/headless-ecom-store.git",
   "version": "3.0.1",
   "license": "MIT",
-  "author": {
-    "name": "Vien Dinh",
-    "email": "maxvien@gmail.com",
-    "url": "https://github.com/maxvien"
-  },
-  "volta": {
-    "node": "18.20.7",
-    "npm": "10.8.2"
-  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
