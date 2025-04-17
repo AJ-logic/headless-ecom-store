@@ -25,7 +25,7 @@ You can visit here to see the demo: https://next-shopify-storefront.vercel.app/
 Clone the source code into your computer.
 
 ```bash
-git clone https://github.com/AJ-logic/headless-ecom-store.git
+git clone https://github.com/VienDinhCom/next-shopify-storefront.git
 ```
 
 **This project was developed with Node 18 and NPM 10.**<br>
@@ -95,3 +95,4 @@ To speed up your productivity, you can install these extensions:
 - [Visual Studio IntelliCode](https://marketplace.visualstudio.com/items?itemName=VisualStudioExptTeam.vscodeintellicode)
 - [Tailwind CSS IntelliSense](https://marketplace.visualstudio.com/items?itemName=bradlc.vscode-tailwindcss)
 - [PostCSS Language Support](https://marketplace.visualstudio.com/items?itemName=csstools.postcss)
+- 

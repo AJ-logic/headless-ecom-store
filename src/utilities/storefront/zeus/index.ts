@@ -1,7 +1,7 @@
 /* eslint-disable */
 
 import { AllTypesProps, ReturnTypes, Ops } from './const';
-export const HOST = "https://graphql.myshopify.com/api/2023-01/graphql.json"
+export const HOST = "https://graphql.myshopify.com/api/2023-10/graphql.json"
 
 
 export const HEADERS = {}
@@ -156,60 +156,82 @@ export const InternalsBuildQuery = ({
   return ibb;
 };
 
+type UnionOverrideKeys<T, U> = Omit<T, keyof U> & U;
+
 export const Thunder =
-  (fn: FetchFunction) =>
-  <O extends keyof typeof Ops, SCLR extends ScalarDefinition, R extends keyof ValueTypes = GenericOperation<O>>(
+  <SCLR extends ScalarDefinition>(fn: FetchFunction, thunderGraphQLOptions?: ThunderGraphQLOptions<SCLR>) =>
+  <O extends keyof typeof Ops, OVERRIDESCLR extends SCLR, R extends keyof ValueTypes = GenericOperation<O>>(
     operation: O,
-    graphqlOptions?: ThunderGraphQLOptions<SCLR>,
+    graphqlOptions?: ThunderGraphQLOptions<OVERRIDESCLR>,
   ) =>
-  <Z extends ValueTypes[R]>(o: Z | ValueTypes[R], ops?: OperationOptions & { variables?: Record<string, unknown> }) =>
-    fn(
+  <Z extends ValueTypes[R]>(
+    o: Z & {
+      [P in keyof Z]: P extends keyof ValueTypes[R] ? Z[P] : never;
+    },
+    ops?: OperationOptions & { variables?: Record<string, unknown> },
+  ) => {
+    const options = {
+      ...thunderGraphQLOptions,
+      ...graphqlOptions,
+    };
+    return fn(
       Zeus(operation, o, {
         operationOptions: ops,
-        scalars: graphqlOptions?.scalars,
+        scalars: options?.scalars,
       }),
       ops?.variables,
     ).then((data) => {
-      if (graphqlOptions?.scalars) {
+      if (options?.scalars) {
         return decodeScalarsInResponse({
           response: data,
           initialOp: operation,
           initialZeusQuery: o as VType,
           returns: ReturnTypes,
-          scalars: graphqlOptions.scalars,
+          scalars: options.scalars,
           ops: Ops,
         });
       }
       return data;
-    }) as Promise<InputType<GraphQLTypes[R], Z, SCLR>>;
+    }) as Promise<InputType<GraphQLTypes[R], Z, UnionOverrideKeys<SCLR, OVERRIDESCLR>>>;
+  };
 
 export const Chain = (...options: chainOptions) => Thunder(apiFetch(options));
 
 export const SubscriptionThunder =
-  (fn: SubscriptionFunction) =>
-  <O extends keyof typeof Ops, SCLR extends ScalarDefinition, R extends keyof ValueTypes = GenericOperation<O>>(
+  <SCLR extends ScalarDefinition>(fn: SubscriptionFunction, thunderGraphQLOptions?: ThunderGraphQLOptions<SCLR>) =>
+  <O extends keyof typeof Ops, OVERRIDESCLR extends SCLR, R extends keyof ValueTypes = GenericOperation<O>>(
     operation: O,
-    graphqlOptions?: ThunderGraphQLOptions<SCLR>,
+    graphqlOptions?: ThunderGraphQLOptions<OVERRIDESCLR>,
   ) =>
-  <Z extends ValueTypes[R]>(o: Z | ValueTypes[R], ops?: OperationOptions & { variables?: ExtractVariables<Z> }) => {
+  <Z extends ValueTypes[R]>(
+    o: Z & {
+      [P in keyof Z]: P extends keyof ValueTypes[R] ? Z[P] : never;
+    },
+    ops?: OperationOptions & { variables?: ExtractVariables<Z> },
+  ) => {
+    const options = {
+      ...thunderGraphQLOptions,
+      ...graphqlOptions,
+    };
+    type CombinedSCLR = UnionOverrideKeys<SCLR, OVERRIDESCLR>;
     const returnedFunction = fn(
       Zeus(operation, o, {
         operationOptions: ops,
-        scalars: graphqlOptions?.scalars,
+        scalars: options?.scalars,
       }),
-    ) as SubscriptionToGraphQL<Z, GraphQLTypes[R], SCLR>;
-    if (returnedFunction?.on && graphqlOptions?.scalars) {
+    ) as SubscriptionToGraphQL<Z, GraphQLTypes[R], CombinedSCLR>;
+    if (returnedFunction?.on && options?.scalars) {
       const wrapped = returnedFunction.on;
-      returnedFunction.on = (fnToCall: (args: InputType<GraphQLTypes[R], Z, SCLR>) => void) =>
-        wrapped((data: InputType<GraphQLTypes[R], Z, SCLR>) => {
-          if (graphqlOptions?.scalars) {
+      returnedFunction.on = (fnToCall: (args: InputType<GraphQLTypes[R], Z, CombinedSCLR>) => void) =>
+        wrapped((data: InputType<GraphQLTypes[R], Z, CombinedSCLR>) => {
+          if (options?.scalars) {
             return fnToCall(
               decodeScalarsInResponse({
                 response: data,
                 initialOp: operation,
                 initialZeusQuery: o as VType,
                 returns: ReturnTypes,
-                scalars: graphqlOptions.scalars,
+                scalars: options.scalars,
                 ops: Ops,
               }),
             );
@@ -227,7 +249,7 @@ export const Zeus = <
   R extends keyof ValueTypes = GenericOperation<O>,
 >(
   operation: O,
-  o: Z | ValueTypes[R],
+  o: Z,
   ops?: {
     operationOptions?: OperationOptions;
     scalars?: ScalarDefinition;
@@ -697,7 +719,7 @@ type IsInterfaced<SRC extends DeepAnify<DST>, DST, SCLR extends ScalarDefinition
       [P in keyof SRC]: SRC[P] extends '__union' & infer R
         ? P extends keyof DST
           ? IsArray<R, '__typename' extends keyof DST ? DST[P] & { __typename: true } : DST[P], SCLR>
-          : IsArray<R, '__typename' extends keyof DST ? { __typename: true } : never, SCLR>
+          : IsArray<R, '__typename' extends keyof DST ? { __typename: true } : Record<string, never>, SCLR>
         : never;
     }[keyof SRC] & {
       [P in keyof Omit<
@@ -745,7 +767,11 @@ export type ScalarResolver = {
   decode?: (s: unknown) => unknown;
 };
 
-export type SelectionFunction<V> = <T>(t: T | V) => T;
+export type SelectionFunction<V> = <Z extends V>(
+  t: Z & {
+    [P in keyof Z]: P extends keyof V ? Z[P] : never;
+  },
+) => Z;
 
 type BuiltInVariableTypes = {
   ['String']: string;
@@ -807,11 +833,18 @@ export type Variable<T extends GraphQLVariableType, Name extends string> = {
   ' __zeus_type': T;
 };
 
+export type ExtractVariablesDeep<Query> = Query extends Variable<infer VType, infer VName>
+  ? { [key in VName]: GetVariableType<VType> }
+  : Query extends string | number | boolean | Array<string | number | boolean>
+  ? // eslint-disable-next-line @typescript-eslint/ban-types
+    {}
+  : UnionToIntersection<{ [K in keyof Query]: WithOptionalNullables<ExtractVariablesDeep<Query[K]>> }[keyof Query]>;
+
 export type ExtractVariables<Query> = Query extends Variable<infer VType, infer VName>
   ? { [key in VName]: GetVariableType<VType> }
   : Query extends [infer Inputs, infer Outputs]
-  ? ExtractVariables<Inputs> & ExtractVariables<Outputs>
-  : Query extends string | number | boolean
+  ? ExtractVariablesDeep<Inputs> & ExtractVariables<Outputs>
+  : Query extends string | number | boolean | Array<string | number | boolean>
   ? // eslint-disable-next-line @typescript-eslint/ban-types
     {}
   : UnionToIntersection<{ [K in keyof Query]: WithOptionalNullables<ExtractVariables<Query[K]>> }[keyof Query]>;
@@ -824,7 +857,7 @@ export const GRAPHQL_TYPE_SEPARATOR = `__$GRAPHQL__`;
 export const $ = <Type extends GraphQLVariableType, Name extends string>(name: Name, graphqlType: Type) => {
   return (START_VAR_NAME + name + GRAPHQL_TYPE_SEPARATOR + graphqlType) as unknown as Variable<Type, Name>;
 };
-type ZEUS_INTERFACES = GraphQLTypes["CartDiscountAllocation"] | GraphQLTypes["DiscountApplication"] | GraphQLTypes["DisplayableError"] | GraphQLTypes["HasMetafields"] | GraphQLTypes["Media"] | GraphQLTypes["Node"] | GraphQLTypes["OnlineStorePublishable"]
+type ZEUS_INTERFACES = GraphQLTypes["BaseCartLine"] | GraphQLTypes["CartDiscountAllocation"] | GraphQLTypes["DiscountApplication"] | GraphQLTypes["DisplayableError"] | GraphQLTypes["HasMetafields"] | GraphQLTypes["Media"] | GraphQLTypes["Node"] | GraphQLTypes["OnlineStorePublishable"] | GraphQLTypes["Trackable"]
 export type ScalarCoders = {
 	Color?: ScalarResolver;
 	DateTime?: ScalarResolver;
@@ -834,7 +867,7 @@ export type ScalarCoders = {
 	URL?: ScalarResolver;
 	UnsignedInt64?: ScalarResolver;
 }
-type ZEUS_UNIONS = GraphQLTypes["DeliveryAddress"] | GraphQLTypes["Merchandise"] | GraphQLTypes["MetafieldParentResource"] | GraphQLTypes["MetafieldReference"] | GraphQLTypes["PricingValue"] | GraphQLTypes["SellingPlanCheckoutChargeValue"] | GraphQLTypes["SellingPlanPriceAdjustmentValue"]
+type ZEUS_UNIONS = GraphQLTypes["CartCompletionAction"] | GraphQLTypes["CartCompletionAttemptResult"] | GraphQLTypes["CartSubmitForCompletionResult"] | GraphQLTypes["DeliveryAddress"] | GraphQLTypes["MenuItemResource"] | GraphQLTypes["Merchandise"] | GraphQLTypes["MetafieldParentResource"] | GraphQLTypes["MetafieldReference"] | GraphQLTypes["PricingValue"] | GraphQLTypes["SearchResultItem"] | GraphQLTypes["SellingPlanCheckoutChargeValue"] | GraphQLTypes["SellingPlanPriceAdjustmentValue"]
 
 export type ValueTypes = {
     /** A version of the API, as defined by [Shopify API versioning](https://shopify.dev/api/usage/versioning).
@@ -849,6 +882,34 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	supported?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for submitting Apple Pay payment method information for checkout.
+ */
+["ApplePayWalletContentInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ValueTypes["MailingAddressInput"] | Variable<any, string>,
+	/** The data for the Apple Pay wallet. */
+	data: string | Variable<any, string>,
+	/** The header data for the Apple Pay wallet. */
+	header: ValueTypes["ApplePayWalletHeaderInput"] | Variable<any, string>,
+	/** The last digits of the card used to create the payment. */
+	lastDigits?: string | undefined | null | Variable<any, string>,
+	/** The signature for the Apple Pay wallet. */
+	signature: string | Variable<any, string>,
+	/** The version for the Apple Pay wallet. */
+	version: string | Variable<any, string>
+};
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["ApplePayWalletHeaderInput"]: {
+	/** The application data for the Apple Pay wallet. */
+	applicationData?: string | undefined | null | Variable<any, string>,
+	/** The ephemeral public key for the Apple Pay wallet. */
+	ephemeralPublicKey: string | Variable<any, string>,
+	/** The public key hash for the Apple Pay wallet. */
+	publicKeyHash: string | Variable<any, string>,
+	/** The transaction ID for the Apple Pay wallet. */
+	transactionId: string | Variable<any, string>
+};
 	/** Details about the gift card used on the checkout. */
 ["AppliedGiftCard"]: AliasType<{
 	/** The amount that was taken from the gift card by applying it. */
@@ -859,7 +920,7 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	balance?:ValueTypes["MoneyV2"],
 	/** The amount left on the gift card. */
 	balanceV2?:ValueTypes["MoneyV2"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The last characters of the gift card. */
 	lastCharacters?:boolean | `@${string}`,
@@ -881,25 +942,26 @@ comments?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["CommentConnection"]],
-content?: [{	/** Truncates string after the given length. */
+content?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null | Variable<any, string>},boolean | `@${string}`],
 	/** The content of the article, complete with HTML formatting. */
 	contentHtml?:boolean | `@${string}`,
-excerpt?: [{	/** Truncates string after the given length. */
+excerpt?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null | Variable<any, string>},boolean | `@${string}`],
 	/** The excerpt of the article, complete with HTML formatting. */
 	excerptHtml?:boolean | `@${string}`,
-	/** A human-friendly unique string for the Article automatically generated from its title.
- */
+	/** A human-friendly unique string for the Article automatically generated from its title. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The image associated with the article. */
 	image?:ValueTypes["Image"],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -907,10 +969,13 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	publishedAt?:boolean | `@${string}`,
 	/** The article’s SEO information. */
 	seo?:ValueTypes["SEO"],
-	/** A categorization that a article can be tagged with. */
+	/** A categorization that a article can be tagged with.
+ */
 	tags?:boolean | `@${string}`,
 	/** The article’s name. */
 	title?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** The author of an article. */
@@ -949,15 +1014,17 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 }>;
 	/** The set of valid sort keys for the Article query. */
 ["ArticleSortKeys"]:ArticleSortKeys;
-	/** Represents a generic custom attribute. */
+	/** Represents a generic custom attribute, such as whether an order is a customer's first. */
 ["Attribute"]: AliasType<{
-	/** Key or name of the attribute. */
+	/** The key or name of the attribute. For example, `"customersFirstOrder"`.
+ */
 	key?:boolean | `@${string}`,
-	/** Value of the attribute. */
+	/** The value of the attribute. For example, `"true"`.
+ */
 	value?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required for an attribute. */
+	/** The input fields for an attribute. */
 ["AttributeInput"]: {
 	/** Key or name of the attribute. */
 	key: string | Variable<any, string>,
@@ -990,6 +1057,50 @@ This field should be polled until its value becomes `true`.
 	shippingRates?:ValueTypes["ShippingRate"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Represents a cart line common fields. */
+["BaseCartLine"]:AliasType<{
+	attribute?: [{	/** The key of the attribute. */
+	key: string | Variable<any, string>},ValueTypes["Attribute"]],
+	/** The attributes associated with the cart line. Attributes are represented as key-value pairs. */
+	attributes?:ValueTypes["Attribute"],
+	/** The cost of the merchandise that the buyer will pay for at checkout. The costs are subject to change and changes will be reflected at checkout. */
+	cost?:ValueTypes["CartLineCost"],
+	/** The discounts that have been applied to the cart line. */
+	discountAllocations?:ValueTypes["CartDiscountAllocation"],
+	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
+	estimatedCost?:ValueTypes["CartLineEstimatedCost"],
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The merchandise that the buyer intends to purchase. */
+	merchandise?:ValueTypes["Merchandise"],
+	/** The quantity of the merchandise that the customer intends to purchase. */
+	quantity?:boolean | `@${string}`,
+	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
+	sellingPlanAllocation?:ValueTypes["SellingPlanAllocation"];
+		['...on CartLine']?: Omit<ValueTypes["CartLine"],keyof ValueTypes["BaseCartLine"]>;
+		['...on ComponentizableCartLine']?: Omit<ValueTypes["ComponentizableCartLine"],keyof ValueTypes["BaseCartLine"]>;
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type for paginating through multiple BaseCartLines.
+ */
+["BaseCartLineConnection"]: AliasType<{
+	/** A list of edges. */
+	edges?:ValueTypes["BaseCartLineEdge"],
+	/** A list of the nodes contained in BaseCartLineEdge. */
+	nodes?:ValueTypes["BaseCartLine"],
+	/** Information to aid in pagination. */
+	pageInfo?:ValueTypes["PageInfo"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type which holds one BaseCartLine and a cursor during pagination.
+ */
+["BaseCartLineEdge"]: AliasType<{
+	/** A cursor for use in pagination. */
+	cursor?:boolean | `@${string}`,
+	/** The item at the end of BaseCartLineEdge. */
+	node?:ValueTypes["BaseCartLine"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** An online store blog. */
 ["Blog"]: AliasType<{
 articleByHandle?: [{	/** The handle of the article. */
@@ -1000,16 +1111,16 @@ articles?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["ArticleSortKeys"] | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `author`
- - `blog_title`
- - `created_at`
- - `tag`
- - `tag_not`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ValueTypes["ArticleSortKeys"] | undefined | null | Variable<any, string>,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| author |
+| blog_title |
+| created_at |
+| tag |
+| tag_not |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["ArticleConnection"]],
 	/** The authors who have contributed to the blog. */
@@ -1017,12 +1128,14 @@ for more information about using filters.
 	/** A human-friendly unique string for the Blog automatically generated from its title.
  */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -1054,7 +1167,7 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 }>;
 	/** The set of valid sort keys for the Blog query. */
 ["BlogSortKeys"]:BlogSortKeys;
-	/** The store's branding configuration.
+	/** The store's [branding configuration](https://help.shopify.com/en/manual/promoting-marketing/managing-brand-assets).
  */
 ["Brand"]: AliasType<{
 	/** The colors of the store's brand. */
@@ -1089,6 +1202,14 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	secondary?:ValueTypes["BrandColorGroup"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for obtaining the buyer's identity.
+ */
+["BuyerInput"]: {
+	/** The customer access token retrieved from the [Customer Accounts API](https://shopify.dev/docs/api/customer#step-obtain-access-token). */
+	customerAccessToken: string | Variable<any, string>,
+	/** The identifier of the company location. */
+	companyLocationId?: string | undefined | null | Variable<any, string>
+};
 	/** Card brand, such as Visa or Mastercard, which can be used for payments. */
 ["CardBrand"]:CardBrand;
 	/** A cart represents the merchandise that a buyer intends to purchase,
@@ -1101,7 +1222,7 @@ attribute?: [{	/** The key of the attribute. */
 	key: string | Variable<any, string>},ValueTypes["Attribute"]],
 	/** The attributes associated with the cart. Attributes are represented as key-value pairs. */
 	attributes?:ValueTypes["Attribute"],
-	/** Information about the buyer that is interacting with the cart. */
+	/** Information about the buyer that's interacting with the cart. */
 	buyerIdentity?:ValueTypes["CartBuyerIdentity"],
 	/** The URL of the checkout for the cart. */
 	checkoutUrl?:boolean | `@${string}`,
@@ -1117,24 +1238,26 @@ deliveryGroups?: [{	/** Returns up to the first `n` elements from the list. */
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["CartDeliveryGroupConnection"]],
 	/** The discounts that have been applied to the entire cart. */
 	discountAllocations?:ValueTypes["CartDiscountAllocation"],
-	/** The case-insensitive discount codes that the customer added at checkout.
- */
+	/** The case-insensitive discount codes that the customer added at checkout. */
 	discountCodes?:ValueTypes["CartDiscountCode"],
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated costs are subject to change and changes will be reflected at checkout.
-The `estimatedCost` field uses the `buyerIdentity` field to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated costs are subject to change and changes will be reflected at checkout. The `estimatedCost` field uses the `buyerIdentity` field to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 	estimatedCost?:ValueTypes["CartEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 lines?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["CartLineConnection"]],
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["BaseCartLineConnection"]],
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
+	key: string | Variable<any, string>},ValueTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer. */
 	note?:boolean | `@${string}`,
 	/** The total number of items in the cart. */
 	totalQuantity?:boolean | `@${string}`,
@@ -1167,12 +1290,28 @@ lines?: [{	/** Returns up to the first `n` elements from the list. */
 	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
 The rank of the preferences is determined by the order of the addresses in the array. Preferences
 can be used to populate relevant fields in the checkout flow.
+
+As of the `2025-01` release, `buyerIdentity.deliveryAddressPreferences` is deprecated.
+Delivery addresses are now part of the `CartDelivery` object and managed with three new mutations:
+- `cartDeliveryAddressAdd`
+- `cartDeliveryAddressUpdate`
+- `cartDeliveryAddressDelete`
  */
 	deliveryAddressPreferences?:ValueTypes["DeliveryAddress"],
-	/** The email address of the buyer that is interacting with the cart. */
+	/** The email address of the buyer that's interacting with the cart. */
 	email?:boolean | `@${string}`,
-	/** The phone number of the buyer that is interacting with the cart. */
+	/** The phone number of the buyer that's interacting with the cart. */
 	phone?:boolean | `@${string}`,
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
+ */
+	preferences?:ValueTypes["CartPreferences"],
+	/** The purchasing company associated with the cart. */
+	purchasingCompany?:ValueTypes["PurchasingCompany"],
+	/** A set of wallet preferences tied to the buyer that is interacting with the cart.
+Preferences can be used to populate relevant payment fields in the checkout flow.
+ */
+	walletPreferences?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** Specifies the input fields to update the buyer information associated with a cart.
@@ -1185,15 +1324,16 @@ and should match the customer's shipping address.
 	email?: string | undefined | null | Variable<any, string>,
 	/** The phone number of the buyer that is interacting with the cart. */
 	phone?: string | undefined | null | Variable<any, string>,
+	/** The company location of the buyer that is interacting with the cart. */
+	companyLocationId?: string | undefined | null | Variable<any, string>,
 	/** The country where the buyer is located. */
 	countryCode?: ValueTypes["CountryCode"] | undefined | null | Variable<any, string>,
 	/** The access token used to identify the customer associated with the cart. */
 	customerAccessToken?: string | undefined | null | Variable<any, string>,
-	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
-The rank of the preferences is determined by the order of the addresses in the array. Preferences
-can be used to populate relevant fields in the checkout flow.
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
  */
-	deliveryAddressPreferences?: Array<ValueTypes["DeliveryAddressInput"]> | undefined | null | Variable<any, string>
+	preferences?: ValueTypes["CartPreferencesInput"] | undefined | null | Variable<any, string>
 };
 	/** Return type for `cartBuyerIdentityUpdate` mutation. */
 ["CartBuyerIdentityUpdatePayload"]: AliasType<{
@@ -1203,12 +1343,62 @@ can be used to populate relevant fields in the checkout flow.
 	userErrors?:ValueTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Represents how credit card details are provided for a direct payment.
+ */
+["CartCardSource"]:CartCardSource;
 	/** The discount that has been applied to the cart line using a discount code. */
 ["CartCodeDiscountAllocation"]: AliasType<{
 	/** The code used to apply the discount. */
 	code?:boolean | `@${string}`,
 	/** The discounted amount that has been applied to the cart line. */
 	discountedAmount?:ValueTypes["MoneyV2"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The completion action to checkout a cart. */
+["CartCompletionAction"]: AliasType<{		["...on CompletePaymentChallenge"]?: ValueTypes["CompletePaymentChallenge"]
+		__typename?: boolean | `@${string}`
+}>;
+	/** The required completion action to checkout a cart. */
+["CartCompletionActionRequired"]: AliasType<{
+	/** The action required to complete the cart completion attempt. */
+	action?:ValueTypes["CartCompletionAction"],
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The result of a cart completion attempt. */
+["CartCompletionAttemptResult"]: AliasType<{		["...on CartCompletionActionRequired"]?: ValueTypes["CartCompletionActionRequired"],
+		["...on CartCompletionFailed"]?: ValueTypes["CartCompletionFailed"],
+		["...on CartCompletionProcessing"]?: ValueTypes["CartCompletionProcessing"],
+		["...on CartCompletionSuccess"]?: ValueTypes["CartCompletionSuccess"]
+		__typename?: boolean | `@${string}`
+}>;
+	/** A failed completion to checkout a cart. */
+["CartCompletionFailed"]: AliasType<{
+	/** The errors that caused the checkout to fail. */
+	errors?:ValueTypes["CompletionError"],
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A cart checkout completion that's still processing. */
+["CartCompletionProcessing"]: AliasType<{
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+	/** The number of milliseconds to wait before polling again. */
+	pollDelay?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A successful completion to checkout a cart and a created order. */
+["CartCompletionSuccess"]: AliasType<{
+	/** The date and time when the job completed. */
+	completedAt?:boolean | `@${string}`,
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+	/** The ID of the order that's created in Shopify. */
+	orderId?:boolean | `@${string}`,
+	/** The URL of the order confirmation in Shopify. */
+	orderUrl?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** The costs that the buyer will pay at checkout.
@@ -1252,6 +1442,31 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	title?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreference"]: AliasType<{
+	/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode?:boolean | `@${string}`,
+	/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude?:boolean | `@${string}`,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreferenceInput"]: {
+	/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude: number | Variable<any, string>,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude: number | Variable<any, string>,
+	/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode: ValueTypes["CountryCode"] | Variable<any, string>
+};
 	/** Information about the options available for one or more line items to be delivered to a specific address. */
 ["CartDeliveryGroup"]: AliasType<{
 cartLines?: [{	/** Returns up to the first `n` elements from the list. */
@@ -1259,11 +1474,13 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["CartLineConnection"]],
+	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["BaseCartLineConnection"]],
 	/** The destination address for the delivery group. */
 	deliveryAddress?:ValueTypes["MailingAddress"],
 	/** The delivery options available for the delivery group. */
 	deliveryOptions?:ValueTypes["CartDeliveryOption"],
+	/** The type of merchandise in the delivery group. */
+	groupType?:boolean | `@${string}`,
 	/** The ID for the delivery group. */
 	id?:boolean | `@${string}`,
 	/** The selected delivery option for the delivery group. */
@@ -1290,6 +1507,9 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 	node?:ValueTypes["CartDeliveryGroup"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Defines what type of merchandise is in the delivery group.
+ */
+["CartDeliveryGroupType"]:CartDeliveryGroupType;
 	/** Information about a delivery option. */
 ["CartDeliveryOption"]: AliasType<{
 	/** The code of the delivery option. */
@@ -1306,6 +1526,44 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 	title?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartDeliveryPreference"]: AliasType<{
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+	coordinates?:ValueTypes["CartDeliveryCoordinatesPreference"],
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+	deliveryMethod?:boolean | `@${string}`,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+ */
+	pickupHandle?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Delivery preferences can be used to prefill the delivery section at checkout. */
+["CartDeliveryPreferenceInput"]: {
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points.
+
+The input must not contain more than `250` values. */
+	deliveryMethod?: Array<ValueTypes["PreferenceDeliveryMethodType"]> | undefined | null | Variable<any, string>,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+
+The input must not contain more than `250` values. */
+	pickupHandle?: Array<string> | undefined | null | Variable<any, string>,
+	/** The coordinates of a delivery location in order of preference. */
+	coordinates?: ValueTypes["CartDeliveryCoordinatesPreferenceInput"] | undefined | null | Variable<any, string>
+};
+	/** The input fields for submitting direct payment method information for checkout.
+ */
+["CartDirectPaymentMethodInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ValueTypes["MailingAddressInput"] | Variable<any, string>,
+	/** The session ID for the direct payment method used to create the payment. */
+	sessionId: string | Variable<any, string>,
+	/** The source of the credit card payment. */
+	cardSource?: ValueTypes["CartCardSource"] | undefined | null | Variable<any, string>
+};
 	/** The discounts that have been applied to the cart line. */
 ["CartDiscountAllocation"]:AliasType<{
 		/** The discounted amount that has been applied to the cart line. */
@@ -1333,12 +1591,7 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 }>;
 	/** Possible error codes that can be returned by `CartUserError`. */
 ["CartErrorCode"]:CartErrorCode;
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated cost uses
-[`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity)
-to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity) to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 ["CartEstimatedCost"]: AliasType<{
 	/** The estimated amount, before taxes and discounts, for the customer to pay at checkout. The checkout charge amount doesn't include any deferred payments that'll be paid at a later date. If the cart has no deferred payments, then the checkout charge amount is equivalent to`subtotal_amount`. */
 	checkoutChargeAmount?:ValueTypes["MoneyV2"],
@@ -1352,22 +1605,50 @@ to determine
 	totalTaxAmount?:ValueTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields to create a cart. */
+	/** The input fields for submitting a billing address without a selected payment method.
+ */
+["CartFreePaymentMethodInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ValueTypes["MailingAddressInput"] | Variable<any, string>
+};
+	/** The input fields to create a cart. */
 ["CartInput"]: {
-	/** An array of key-value pairs that contains additional information about the cart. */
+	/** An array of key-value pairs that contains additional information about the cart.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ValueTypes["AttributeInput"]> | undefined | null | Variable<any, string>,
-	/** A list of merchandise lines to add to the cart. */
+	/** A list of merchandise lines to add to the cart.
+
+The input must not contain more than `250` values. */
 	lines?: Array<ValueTypes["CartLineInput"]> | undefined | null | Variable<any, string>,
 	/** The case-insensitive discount codes that the customer added at checkout.
- */
+
+The input must not contain more than `250` values. */
 	discountCodes?: Array<string> | undefined | null | Variable<any, string>,
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer.
+ */
 	note?: string | undefined | null | Variable<any, string>,
 	/** The customer associated with the cart. Used to determine [international pricing]
 (https://shopify.dev/custom-storefronts/internationalization/international-pricing).
 Buyer identity should match the customer's shipping address.
  */
-	buyerIdentity?: ValueTypes["CartBuyerIdentityInput"] | undefined | null | Variable<any, string>
+	buyerIdentity?: ValueTypes["CartBuyerIdentityInput"] | undefined | null | Variable<any, string>,
+	/** The metafields to associate with this cart.
+
+The input must not contain more than `250` values. */
+	metafields?: Array<ValueTypes["CartInputMetafieldInput"]> | undefined | null | Variable<any, string>
+};
+	/** The input fields for a cart metafield value to set. */
+["CartInputMetafieldInput"]: {
+	/** The key name of the metafield. */
+	key: string | Variable<any, string>,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string | Variable<any, string>,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string | Variable<any, string>
 };
 	/** Represents information about the merchandise in the cart. */
 ["CartLine"]: AliasType<{
@@ -1381,7 +1662,7 @@ attribute?: [{	/** The key of the attribute. */
 	discountAllocations?:ValueTypes["CartDiscountAllocation"],
 	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
 	estimatedCost?:ValueTypes["CartLineEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The merchandise that the buyer intends to purchase. */
 	merchandise?:ValueTypes["Merchandise"],
@@ -1389,17 +1670,6 @@ attribute?: [{	/** The key of the attribute. */
 	quantity?:boolean | `@${string}`,
 	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
 	sellingPlanAllocation?:ValueTypes["SellingPlanAllocation"],
-		__typename?: boolean | `@${string}`
-}>;
-	/** An auto-generated type for paginating through multiple CartLines.
- */
-["CartLineConnection"]: AliasType<{
-	/** A list of edges. */
-	edges?:ValueTypes["CartLineEdge"],
-	/** A list of the nodes contained in CartLineEdge. */
-	nodes?:ValueTypes["CartLine"],
-	/** Information to aid in pagination. */
-	pageInfo?:ValueTypes["PageInfo"],
 		__typename?: boolean | `@${string}`
 }>;
 	/** The cost of the merchandise line that the buyer will pay at checkout. */
@@ -1414,16 +1684,8 @@ attribute?: [{	/** The key of the attribute. */
 	totalAmount?:ValueTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** An auto-generated type which holds one CartLine and a cursor during pagination.
+	/** The estimated cost of the merchandise line that the buyer will pay at checkout.
  */
-["CartLineEdge"]: AliasType<{
-	/** A cursor for use in pagination. */
-	cursor?:boolean | `@${string}`,
-	/** The item at the end of CartLineEdge. */
-	node?:ValueTypes["CartLine"],
-		__typename?: boolean | `@${string}`
-}>;
-	/** The estimated cost of the merchandise line that the buyer will pay at checkout. */
 ["CartLineEstimatedCost"]: AliasType<{
 	/** The amount of the merchandise line. */
 	amount?:ValueTypes["MoneyV2"],
@@ -1435,28 +1697,32 @@ attribute?: [{	/** The key of the attribute. */
 	totalAmount?:ValueTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields to create a merchandise line on a cart. */
+	/** The input fields to create a merchandise line on a cart. */
 ["CartLineInput"]: {
-	/** An array of key-value pairs that contains additional information about the merchandise line. */
+	/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ValueTypes["AttributeInput"]> | undefined | null | Variable<any, string>,
 	/** The quantity of the merchandise. */
 	quantity?: number | undefined | null | Variable<any, string>,
-	/** The identifier of the merchandise that the buyer intends to purchase. */
+	/** The ID of the merchandise that the buyer intends to purchase. */
 	merchandiseId: string | Variable<any, string>,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined | null | Variable<any, string>
 };
-	/** Specifies the input fields to update a line item on a cart. */
+	/** The input fields to update a line item on a cart. */
 ["CartLineUpdateInput"]: {
-	/** The identifier of the merchandise line. */
+	/** The ID of the merchandise line. */
 	id: string | Variable<any, string>,
 	/** The quantity of the line item. */
 	quantity?: number | undefined | null | Variable<any, string>,
-	/** The identifier of the merchandise for the line item. */
+	/** The ID of the merchandise for the line item. */
 	merchandiseId?: string | undefined | null | Variable<any, string>,
-	/** An array of key-value pairs that contains additional information about the merchandise line. */
+	/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ValueTypes["AttributeInput"]> | undefined | null | Variable<any, string>,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined | null | Variable<any, string>
 };
 	/** Return type for `cartLinesAdd` mutation. */
@@ -1483,6 +1749,45 @@ attribute?: [{	/** The key of the attribute. */
 	userErrors?:ValueTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields to delete a cart metafield. */
+["CartMetafieldDeleteInput"]: {
+	/** The ID of the cart resource. */
+	ownerId: string | Variable<any, string>,
+	/** The key name of the cart metafield. Can either be a composite key (`namespace.key`) or a simple key
+ that relies on the default app-reserved namespace.
+ */
+	key: string | Variable<any, string>
+};
+	/** Return type for `cartMetafieldDelete` mutation. */
+["CartMetafieldDeletePayload"]: AliasType<{
+	/** The ID of the deleted cart metafield. */
+	deletedId?:boolean | `@${string}`,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ValueTypes["MetafieldDeleteUserError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The input fields for a cart metafield value to set. */
+["CartMetafieldsSetInput"]: {
+	/** The ID of the cart resource. */
+	ownerId: string | Variable<any, string>,
+	/** The key name of the cart metafield. */
+	key: string | Variable<any, string>,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string | Variable<any, string>,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string | Variable<any, string>
+};
+	/** Return type for `cartMetafieldsSet` mutation. */
+["CartMetafieldsSetPayload"]: AliasType<{
+	/** The list of cart metafields that were set. */
+	metafields?:ValueTypes["Metafield"],
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ValueTypes["MetafieldsSetUserError"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Return type for `cartNoteUpdate` mutation. */
 ["CartNoteUpdatePayload"]: AliasType<{
 	/** The updated cart. */
@@ -1491,6 +1796,56 @@ attribute?: [{	/** The key of the attribute. */
 	userErrors?:ValueTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for updating the payment method that will be used to checkout.
+ */
+["CartPaymentInput"]: {
+	/** The amount that the customer will be charged at checkout. */
+	amount: ValueTypes["MoneyInput"] | Variable<any, string>,
+	/** An ID of the order placed on the originating platform.
+Note that this value doesn't correspond to the Shopify Order ID.
+ */
+	sourceIdentifier?: string | undefined | null | Variable<any, string>,
+	/** The input fields to use to checkout a cart without providing a payment method.
+Use this payment method input if the total cost of the cart is 0.
+ */
+	freePaymentMethod?: ValueTypes["CartFreePaymentMethodInput"] | undefined | null | Variable<any, string>,
+	/** The input fields to use when checking out a cart with a direct payment method (like a credit card).
+ */
+	directPaymentMethod?: ValueTypes["CartDirectPaymentMethodInput"] | undefined | null | Variable<any, string>,
+	/** The input fields to use when checking out a cart with a wallet payment method (like Shop Pay or Apple Pay).
+ */
+	walletPaymentMethod?: ValueTypes["CartWalletPaymentMethodInput"] | undefined | null | Variable<any, string>
+};
+	/** Return type for `cartPaymentUpdate` mutation. */
+["CartPaymentUpdatePayload"]: AliasType<{
+	/** The updated cart. */
+	cart?:ValueTypes["Cart"],
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ValueTypes["CartUserError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartPreferences"]: AliasType<{
+	/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?:ValueTypes["CartDeliveryPreference"],
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+ */
+	wallet?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The input fields represent preferences for the buyer that is interacting with the cart. */
+["CartPreferencesInput"]: {
+	/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?: ValueTypes["CartDeliveryPreferenceInput"] | undefined | null | Variable<any, string>,
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+
+The input must not contain more than `250` values. */
+	wallet?: Array<string> | undefined | null | Variable<any, string>
+};
 	/** The input fields for updating the selected delivery options for a delivery group.
  */
 ["CartSelectedDeliveryOptionInput"]: {
@@ -1507,6 +1862,21 @@ attribute?: [{	/** The key of the attribute. */
 	userErrors?:ValueTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Return type for `cartSubmitForCompletion` mutation. */
+["CartSubmitForCompletionPayload"]: AliasType<{
+	/** The result of cart submission for completion. */
+	result?:ValueTypes["CartSubmitForCompletionResult"],
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ValueTypes["CartUserError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The result of cart submit completion. */
+["CartSubmitForCompletionResult"]: AliasType<{		["...on SubmitAlreadyAccepted"]?: ValueTypes["SubmitAlreadyAccepted"],
+		["...on SubmitFailed"]?: ValueTypes["SubmitFailed"],
+		["...on SubmitSuccess"]?: ValueTypes["SubmitSuccess"],
+		["...on SubmitThrottled"]?: ValueTypes["SubmitThrottled"]
+		__typename?: boolean | `@${string}`
+}>;
 	/** Represents an error that happens during execution of a cart mutation. */
 ["CartUserError"]: AliasType<{
 	/** The error code. */
@@ -1517,7 +1887,18 @@ attribute?: [{	/** The key of the attribute. */
 	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A container for all the information required to checkout items and pay. */
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["CartWalletPaymentMethodInput"]: {
+	/** The payment method information for the Apple Pay wallet. */
+	applePayWalletContent?: ValueTypes["ApplePayWalletContentInput"] | undefined | null | Variable<any, string>,
+	/** The payment method information for the Shop Pay wallet. */
+	shopPayWalletContent?: ValueTypes["ShopPayWalletContentInput"] | undefined | null | Variable<any, string>
+};
+	/** A container for all the information required to checkout items and pay.
+
+The Storefront GraphQL Checkout API is deprecated and will be removed in a future version. Please see https://shopify.dev/changelog/deprecation-of-checkout-apis for more information.
+ */
 ["Checkout"]: AliasType<{
 	/** The gift cards used on the checkout. */
 	appliedGiftCards?:ValueTypes["AppliedGiftCard"],
@@ -1534,7 +1915,7 @@ the shipping address is valid.
 	createdAt?:boolean | `@${string}`,
 	/** The currency code for the checkout. */
 	currencyCode?:boolean | `@${string}`,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout. */
 	customAttributes?:ValueTypes["Attribute"],
 discountApplications?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
@@ -1544,7 +1925,7 @@ discountApplications?: [{	/** Returns up to the first `n` elements from the list
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["DiscountApplicationConnection"]],
 	/** The email attached to this checkout. */
 	email?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
@@ -1558,7 +1939,7 @@ lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	note?:boolean | `@${string}`,
 	/** The resulting order from a paid checkout. */
 	order?:ValueTypes["Order"],
-	/** The Order Status Page for this Checkout, null when checkout is not completed. */
+	/** The <b>Order status</b> page for this Checkout, null when checkout isn't completed. */
 	orderStatusUrl?:boolean | `@${string}`,
 	/** The amount left to be paid. This is equal to the cost of the line items, taxes, and shipping, minus discounts and gift cards. */
 	paymentDue?:ValueTypes["MoneyV2"],
@@ -1577,7 +1958,7 @@ date, polling is required until the value is true.
 	/** The discounts that have been allocated onto the shipping line by discount applications.
  */
 	shippingDiscountAllocations?:ValueTypes["DiscountAllocation"],
-	/** Once a shipping rate is selected by the customer it is transitioned to a `shipping_line` object. */
+	/** Once a shipping rate is selected by the customer it's transitioned to a `shipping_line` object. */
 	shippingLine?:ValueTypes["ShippingRate"],
 	/** The price at checkout before shipping and taxes. */
 	subtotalPrice?:ValueTypes["MoneyV2"],
@@ -1603,11 +1984,13 @@ date, polling is required until the value is true.
 	webUrl?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to update a checkout's attributes. */
+	/** The input fields required to update a checkout's attributes. */
 ["CheckoutAttributesUpdateV2Input"]: {
 	/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined | null | Variable<any, string>,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ValueTypes["AttributeInput"]> | undefined | null | Variable<any, string>,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -1632,7 +2015,7 @@ each operation.
 	countryCode?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the identity of the customer associated with the checkout. */
+	/** The input fields for the identity of the customer associated with the checkout. */
 ["CheckoutBuyerIdentityInput"]: {
 	/** The country code of one of the shop's
 [enabled countries](https://help.shopify.com/en/manual/payments/shopify-payments/multi-currency/setup).
@@ -1674,17 +2057,21 @@ For example, `CA`. Including this field creates a checkout in the specified coun
 	userErrors?:ValueTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to create a checkout. */
+	/** The input fields required to create a checkout. */
 ["CheckoutCreateInput"]: {
 	/** The email with which the customer wants to checkout. */
 	email?: string | undefined | null | Variable<any, string>,
-	/** A list of line item objects, each one containing information about an item in the checkout. */
+	/** A list of line item objects, each one containing information about an item in the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems?: Array<ValueTypes["CheckoutLineItemInput"]> | undefined | null | Variable<any, string>,
 	/** The shipping address to where the line items will be shipped. */
 	shippingAddress?: ValueTypes["MailingAddressInput"] | undefined | null | Variable<any, string>,
 	/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined | null | Variable<any, string>,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ValueTypes["AttributeInput"]> | undefined | null | Variable<any, string>,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -1786,7 +2173,7 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	customAttributes?:ValueTypes["Attribute"],
 	/** The discounts that have been allocated onto the checkout line item by discount applications. */
 	discountAllocations?:ValueTypes["DiscountAllocation"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The quantity of the line item. */
 	quantity?:boolean | `@${string}`,
@@ -1818,24 +2205,28 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	node?:ValueTypes["CheckoutLineItem"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields to create a line item on a checkout. */
+	/** The input fields to create a line item on a checkout. */
 ["CheckoutLineItemInput"]: {
-	/** Extra information in the form of an array of Key-Value pairs about the line item. */
+	/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ValueTypes["AttributeInput"]> | undefined | null | Variable<any, string>,
 	/** The quantity of the line item. */
 	quantity: number | Variable<any, string>,
-	/** The identifier of the product variant for the line item. */
+	/** The ID of the product variant for the line item. */
 	variantId: string | Variable<any, string>
 };
-	/** Specifies the input fields to update a line item on the checkout. */
+	/** The input fields to update a line item on the checkout. */
 ["CheckoutLineItemUpdateInput"]: {
-	/** The identifier of the line item. */
+	/** The ID of the line item. */
 	id?: string | undefined | null | Variable<any, string>,
-	/** The variant identifier of the line item. */
+	/** The variant ID of the line item. */
 	variantId?: string | undefined | null | Variable<any, string>,
 	/** The quantity of the line item. */
 	quantity?: number | undefined | null | Variable<any, string>,
-	/** Extra information in the form of an array of Key-Value pairs about the line item. */
+	/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ValueTypes["AttributeInput"]> | undefined | null | Variable<any, string>
 };
 	/** Return type for `checkoutLineItemsAdd` mutation. */
@@ -1906,9 +2297,11 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A collection represents a grouping of products that a shop owner can create to organize them or make their shops easier to browse. */
+	/** A collection represents a grouping of products that a shop owner can create to
+organize them or make their shops easier to browse.
+ */
 ["Collection"]: AliasType<{
-description?: [{	/** Truncates string after the given length. */
+description?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null | Variable<any, string>},boolean | `@${string}`],
 	/** The description of the collection, complete with HTML formatting. */
 	descriptionHtml?:boolean | `@${string}`,
@@ -1916,14 +2309,16 @@ description?: [{	/** Truncates string after the given length. */
 Limit of 255 characters.
  */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** Image associated with the collection. */
 	image?:ValueTypes["Image"],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -1933,12 +2328,16 @@ products?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["ProductCollectionSortKeys"] | undefined | null | Variable<any, string>,	/** Returns a subset of products matching all product filters. */
+	sortKey?: ValueTypes["ProductCollectionSortKeys"] | undefined | null | Variable<any, string>,	/** Returns a subset of products matching all product filters.
+
+The input must not contain more than `250` values. */
 	filters?: Array<ValueTypes["ProductFilter"]> | undefined | null | Variable<any, string>},ValueTypes["ProductConnection"]],
 	/** The collection's SEO information. */
 	seo?:ValueTypes["SEO"],
 	/** The collection’s name. Limit of 255 characters. */
 	title?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 	/** The date and time when the collection was last modified. */
 	updatedAt?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
@@ -1952,6 +2351,8 @@ products?: [{	/** Returns up to the first `n` elements from the list. */
 	nodes?:ValueTypes["Collection"],
 	/** Information to aid in pagination. */
 	pageInfo?:ValueTypes["PageInfo"],
+	/** The total count of Collections. */
+	totalCount?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** An auto-generated type which holds one Collection and a cursor during pagination.
@@ -1974,11 +2375,11 @@ For example, "#6A8D48".
 ["Comment"]: AliasType<{
 	/** The comment’s author. */
 	author?:ValueTypes["CommentAuthor"],
-content?: [{	/** Truncates string after the given length. */
+content?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null | Variable<any, string>},boolean | `@${string}`],
 	/** The content of the comment, complete with HTML formatting. */
 	contentHtml?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
@@ -2010,6 +2411,104 @@ content?: [{	/** Truncates string after the given length. */
 	node?:ValueTypes["Comment"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Represents information about a company which is also a customer of the shop. */
+["Company"]: AliasType<{
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was created in Shopify. */
+	createdAt?:boolean | `@${string}`,
+	/** A unique externally-supplied ID for the company. */
+	externalId?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
+	key: string | Variable<any, string>},ValueTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
+	/** The name of the company. */
+	name?:boolean | `@${string}`,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was last modified. */
+	updatedAt?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A company's main point of contact. */
+["CompanyContact"]: AliasType<{
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was created in Shopify. */
+	createdAt?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The company contact's locale (language). */
+	locale?:boolean | `@${string}`,
+	/** The company contact's job title. */
+	title?:boolean | `@${string}`,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was last modified. */
+	updatedAt?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A company's location. */
+["CompanyLocation"]: AliasType<{
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was created in Shopify. */
+	createdAt?:boolean | `@${string}`,
+	/** A unique externally-supplied ID for the company. */
+	externalId?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The preferred locale of the company location. */
+	locale?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
+	key: string | Variable<any, string>},ValueTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
+	/** The name of the company location. */
+	name?:boolean | `@${string}`,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was last modified. */
+	updatedAt?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The action for the 3DS payment redirect. */
+["CompletePaymentChallenge"]: AliasType<{
+	/** The URL for the 3DS payment redirect. */
+	redirectUrl?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** An error that occurred during a cart completion attempt. */
+["CompletionError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The code of the error that occurred during a cart completion attempt. */
+["CompletionErrorCode"]:CompletionErrorCode;
+	/** Represents information about the grouped merchandise in the cart. */
+["ComponentizableCartLine"]: AliasType<{
+attribute?: [{	/** The key of the attribute. */
+	key: string | Variable<any, string>},ValueTypes["Attribute"]],
+	/** The attributes associated with the cart line. Attributes are represented as key-value pairs. */
+	attributes?:ValueTypes["Attribute"],
+	/** The cost of the merchandise that the buyer will pay for at checkout. The costs are subject to change and changes will be reflected at checkout. */
+	cost?:ValueTypes["CartLineCost"],
+	/** The discounts that have been applied to the cart line. */
+	discountAllocations?:ValueTypes["CartDiscountAllocation"],
+	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
+	estimatedCost?:ValueTypes["CartLineEstimatedCost"],
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The components of the line item. */
+	lineComponents?:ValueTypes["CartLine"],
+	/** The merchandise that the buyer intends to purchase. */
+	merchandise?:ValueTypes["Merchandise"],
+	/** The quantity of the merchandise that the customer intends to purchase. */
+	quantity?:boolean | `@${string}`,
+	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
+	sellingPlanAllocation?:ValueTypes["SellingPlanAllocation"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** A country. */
 ["Country"]: AliasType<{
 	/** The languages available for the country. */
@@ -2018,6 +2517,8 @@ content?: [{	/** Truncates string after the given length. */
 	currency?:ValueTypes["Currency"],
 	/** The ISO code of the country. */
 	isoCode?:boolean | `@${string}`,
+	/** The market that includes this country. */
+	market?:ValueTypes["Market"],
 	/** The name of the country. */
 	name?:boolean | `@${string}`,
 	/** The unit system used in the country. */
@@ -2077,7 +2578,8 @@ a Shopify vaulted credit card payment.
 	symbol?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** The three-letter currency codes that represent the world currencies used in stores. These include standard ISO 4217 codes, legacy codes,
+	/** The three-letter currency codes that represent the world currencies used in
+stores. These include standard ISO 4217 codes, legacy codes,
 and non-standard codes.
  */
 ["CurrencyCode"]:CurrencyCode;
@@ -2101,16 +2603,18 @@ addresses?: [{	/** Returns up to the first `n` elements from the list. */
 	email?:boolean | `@${string}`,
 	/** The customer’s first name. */
 	firstName?:boolean | `@${string}`,
-	/** A unique identifier for the customer. */
+	/** A unique ID for the customer. */
 	id?:boolean | `@${string}`,
 	/** The customer's most recently updated, incomplete checkout. */
 	lastIncompleteCheckout?:ValueTypes["Checkout"],
 	/** The customer’s last name. */
 	lastName?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** The number of orders that the customer has made at the store in their lifetime. */
 	numberOfOrders?:boolean | `@${string}`,
@@ -2120,11 +2624,11 @@ orders?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["OrderSortKeys"] | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `processed_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ValueTypes["OrderSortKeys"] | undefined | null | Variable<any, string>,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| processed_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["OrderConnection"]],
 	/** The customer’s phone number. */
@@ -2145,7 +2649,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	expiresAt?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required to create a customer access token. */
+	/** The input fields required to create a customer access token. */
 ["CustomerAccessTokenCreateInput"]: {
 	/** The email associated to the customer. */
 	email: string | Variable<any, string>,
@@ -2198,7 +2702,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	customerUserErrors?:ValueTypes["CustomerUserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required to activate a customer. */
+	/** The input fields to activate a customer. */
 ["CustomerActivateInput"]: {
 	/** The activation token required to activate the customer. */
 	activationToken: string | Variable<any, string>,
@@ -2247,7 +2751,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	userErrors?:ValueTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** The fields required to create a new customer. */
+	/** The input fields to create a new customer. */
 ["CustomerCreateInput"]: {
 	/** The customer’s first name. */
 	firstName?: string | undefined | null | Variable<any, string>,
@@ -2307,7 +2811,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	userErrors?:ValueTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to reset a customer’s password. */
+	/** The input fields to reset a customer's password. */
 ["CustomerResetInput"]: {
 	/** The reset token required to reset the customer’s password. */
 	resetToken: string | Variable<any, string>,
@@ -2326,7 +2830,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	userErrors?:ValueTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to update the Customer information. */
+	/** The input fields to update the Customer information. */
 ["CustomerUpdateInput"]: {
 	/** The customer’s first name. */
 	firstName?: string | undefined | null | Variable<any, string>,
@@ -2379,15 +2883,23 @@ Example values: `"29.99"`, `"29.999"`.
  */
 ["Decimal"]:unknown;
 	/** A delivery address of the buyer that is interacting with the cart. */
-["DeliveryAddress"]: AliasType<{		["...on MailingAddress"] : ValueTypes["MailingAddress"]
+["DeliveryAddress"]: AliasType<{		["...on MailingAddress"]?: ValueTypes["MailingAddress"]
 		__typename?: boolean | `@${string}`
 }>;
 	/** The input fields for delivery address preferences.
  */
 ["DeliveryAddressInput"]: {
 	/** A delivery address preference of a buyer that is interacting with the cart. */
-	deliveryAddress?: ValueTypes["MailingAddressInput"] | undefined | null | Variable<any, string>
+	deliveryAddress?: ValueTypes["MailingAddressInput"] | undefined | null | Variable<any, string>,
+	/** Defines what kind of address validation is requested. */
+	deliveryAddressValidationStrategy?: ValueTypes["DeliveryAddressValidationStrategy"] | undefined | null | Variable<any, string>,
+	/** The ID of a customer address that is associated with the buyer that is interacting with the cart.
+ */
+	customerAddressId?: string | undefined | null | Variable<any, string>
 };
+	/** Defines the types of available validation strategies for delivery addresses.
+ */
+["DeliveryAddressValidationStrategy"]:DeliveryAddressValidationStrategy;
 	/** List of different delivery method types. */
 ["DeliveryMethodType"]:DeliveryMethodType;
 	/** Digital wallet, such as Apple Pay, which can be used for accelerated checkouts. */
@@ -2477,6 +2989,8 @@ the time that it is applied.
 		['...on CartUserError']?: Omit<ValueTypes["CartUserError"],keyof ValueTypes["DisplayableError"]>;
 		['...on CheckoutUserError']?: Omit<ValueTypes["CheckoutUserError"],keyof ValueTypes["DisplayableError"]>;
 		['...on CustomerUserError']?: Omit<ValueTypes["CustomerUserError"],keyof ValueTypes["DisplayableError"]>;
+		['...on MetafieldDeleteUserError']?: Omit<ValueTypes["MetafieldDeleteUserError"],keyof ValueTypes["DisplayableError"]>;
+		['...on MetafieldsSetUserError']?: Omit<ValueTypes["MetafieldsSetUserError"],keyof ValueTypes["DisplayableError"]>;
 		['...on UserError']?: Omit<ValueTypes["UserError"],keyof ValueTypes["DisplayableError"]>;
 		__typename?: boolean | `@${string}`
 }>;
@@ -2500,12 +3014,14 @@ the time that it is applied.
 	embeddedUrl?:boolean | `@${string}`,
 	/** The host of the external video. */
 	host?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
 	/** The origin URL of the video on the respective host. */
 	originUrl?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ValueTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ValueTypes["Image"],
 		__typename?: boolean | `@${string}`
@@ -2516,12 +3032,19 @@ the time that it is applied.
 	id?:boolean | `@${string}`,
 	/** A human-friendly string for this filter. */
 	label?:boolean | `@${string}`,
+	/** Describes how to present the filter values.
+Returns a value only for filters of type `LIST`. Returns null for other types.
+ */
+	presentation?:boolean | `@${string}`,
 	/** An enumeration that denotes the type of data this filter represents. */
 	type?:boolean | `@${string}`,
 	/** The list of values for this filter. */
 	values?:ValueTypes["FilterValue"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Defines how to present the filter values, specifies the presentation of the filter.
+ */
+["FilterPresentation"]:FilterPresentation;
 	/** The type of data that the filter group represents.
 
 For more information, refer to [Filter products in a collection with the Storefront API]
@@ -2534,13 +3057,19 @@ For more information, refer to [Filter products in a collection with the Storefr
 	count?:boolean | `@${string}`,
 	/** A unique identifier. */
 	id?:boolean | `@${string}`,
+	/** The visual representation when the filter's presentation is `IMAGE`. */
+	image?:ValueTypes["MediaImage"],
 	/** An input object that can be used to filter by this value on the parent field.
 
-The value is provided as a helper for building dynamic filtering UI. For example, if you have a list of selected `FilterValue` objects, you can combine their respective `input` values to use in a subsequent query.
+The value is provided as a helper for building dynamic filtering UI. For
+example, if you have a list of selected `FilterValue` objects, you can combine
+their respective `input` values to use in a subsequent query.
  */
 	input?:boolean | `@${string}`,
 	/** A human-friendly string for this filter value. */
 	label?:boolean | `@${string}`,
+	/** The visual representation when the filter's presentation is `SWATCH`. */
+	swatch?:ValueTypes["Swatch"],
 		__typename?: boolean | `@${string}`
 }>;
 	/** Represents a single fulfillment in an order. */
@@ -2597,7 +3126,7 @@ trackingInfo?: [{	/** Truncate the array result to this size. */
 ["GenericFile"]: AliasType<{
 	/** A word or phrase to indicate the contents of a file. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The MIME type of the file. */
 	mimeType?:boolean | `@${string}`,
@@ -2609,7 +3138,7 @@ trackingInfo?: [{	/** Truncate the array result to this size. */
 	url?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Used to specify a geographical location. */
+	/** The input fields used to specify a geographical location. */
 ["GeoCoordinateInput"]: {
 	/** The coordinate's latitude value. */
 	latitude: number | Variable<any, string>,
@@ -2624,15 +3153,22 @@ Example value: `"<p>Grey cotton knit sweater.</p>"`
 ["HTML"]:unknown;
 	/** Represents information about the metafields associated to the specified resource. */
 ["HasMetafields"]:AliasType<{
-	metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+	metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]];
 		['...on Article']?: Omit<ValueTypes["Article"],keyof ValueTypes["HasMetafields"]>;
 		['...on Blog']?: Omit<ValueTypes["Blog"],keyof ValueTypes["HasMetafields"]>;
+		['...on Cart']?: Omit<ValueTypes["Cart"],keyof ValueTypes["HasMetafields"]>;
 		['...on Collection']?: Omit<ValueTypes["Collection"],keyof ValueTypes["HasMetafields"]>;
+		['...on Company']?: Omit<ValueTypes["Company"],keyof ValueTypes["HasMetafields"]>;
+		['...on CompanyLocation']?: Omit<ValueTypes["CompanyLocation"],keyof ValueTypes["HasMetafields"]>;
 		['...on Customer']?: Omit<ValueTypes["Customer"],keyof ValueTypes["HasMetafields"]>;
+		['...on Location']?: Omit<ValueTypes["Location"],keyof ValueTypes["HasMetafields"]>;
+		['...on Market']?: Omit<ValueTypes["Market"],keyof ValueTypes["HasMetafields"]>;
 		['...on Order']?: Omit<ValueTypes["Order"],keyof ValueTypes["HasMetafields"]>;
 		['...on Page']?: Omit<ValueTypes["Page"],keyof ValueTypes["HasMetafields"]>;
 		['...on Product']?: Omit<ValueTypes["Product"],keyof ValueTypes["HasMetafields"]>;
@@ -2640,10 +3176,10 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 		['...on Shop']?: Omit<ValueTypes["Shop"],keyof ValueTypes["HasMetafields"]>;
 		__typename?: boolean | `@${string}`
 }>;
-	/** Identifies a metafield on an owner resource by namespace and key. */
+	/** The input fields to identify a metafield on an owner resource by namespace and key. */
 ["HasMetafieldsIdentifier"]: {
-	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,
+	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,
 	/** The identifier for the metafield. */
 	key: string | Variable<any, string>
 };
@@ -2651,9 +3187,9 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 ["Image"]: AliasType<{
 	/** A word or phrase to share the nature or contents of an image. */
 	altText?:boolean | `@${string}`,
-	/** The original height of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original height of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	height?:boolean | `@${string}`,
-	/** A unique identifier for the image. */
+	/** A unique ID for the image. */
 	id?:boolean | `@${string}`,
 	/** The location of the original image as a URL.
 
@@ -2670,7 +3206,7 @@ transformedSrc?: [{	/** Image width in pixels between 1 and 5760. */
 	preferredContentType?: ValueTypes["ImageContentType"] | undefined | null | Variable<any, string>},boolean | `@${string}`],
 url?: [{	/** A set of options to transform the original image. */
 	transform?: ValueTypes["ImageTransformInput"] | undefined | null | Variable<any, string>},boolean | `@${string}`],
-	/** The original width of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original width of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	width?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
@@ -2698,13 +3234,16 @@ url?: [{	/** A set of options to transform the original image. */
 }>;
 	/** The available options for transforming an image.
 
-All transformation options are considered best effort. Any transformation that the original image type doesn't support will be ignored.
+All transformation options are considered best effort. Any transformation that
+the original image type doesn't support will be ignored.
  */
 ["ImageTransformInput"]: {
 	/** The region of the image to remain after cropping.
-Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields, where the `maxWidth` and `maxHeight` aren't equal.
+Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields,
+where the `maxWidth` and `maxHeight` aren't equal.
 The `crop` argument should coincide with the smaller value. A smaller `maxWidth` indicates a `LEFT` or `RIGHT` crop, while
-a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{ maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
+a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{
+maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
 in an image with a width of 5 and height of 10, where the right side of the image is removed.
  */
 	crop?: ValueTypes["CropRegion"] | undefined | null | Variable<any, string>,
@@ -2722,6 +3261,18 @@ Supported conversions: `.svg` to `.png`, any file type to `.jpg`, and any file t
  */
 	preferredContentType?: ValueTypes["ImageContentType"] | undefined | null | Variable<any, string>
 };
+	/** Provide details about the contexts influenced by the @inContext directive on a field. */
+["InContextAnnotation"]: AliasType<{
+	description?:boolean | `@${string}`,
+	type?:ValueTypes["InContextAnnotationType"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** This gives information about the type of context that impacts a field. For example, for a query with @inContext(language: "EN"), the type would point to the name: LanguageCode and kind: ENUM. */
+["InContextAnnotationType"]: AliasType<{
+	kind?:boolean | `@${string}`,
+	name?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
 	/** A [JSON](https://www.json.org/json-en.html) object.
 
 Example value:
@@ -2747,7 +3298,7 @@ Example value:
 	name?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** ISO 639-1 language codes supported by Shopify. */
+	/** Language codes supported by Shopify. */
 ["LanguageCode"]:LanguageCode;
 	/** Information about the localized experiences configured for the shop. */
 ["Localization"]: AliasType<{
@@ -2759,14 +3310,23 @@ Example value:
 	country?:ValueTypes["Country"],
 	/** The language of the active localized experience. Use the `@inContext` directive to change this value. */
 	language?:ValueTypes["Language"],
+	/** The market including the country of the active localized experience. Use the `@inContext` directive to change this value. */
+	market?:ValueTypes["Market"],
 		__typename?: boolean | `@${string}`
 }>;
 	/** Represents a location where product inventory is held. */
 ["Location"]: AliasType<{
 	/** The address of the location. */
 	address?:ValueTypes["LocationAddress"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
+	key: string | Variable<any, string>},ValueTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** The name of the location. */
 	name?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
@@ -2830,14 +3390,11 @@ Example value:
 	/** The second line of the address. Typically the number of the apartment, suite, or unit.
  */
 	address2?:boolean | `@${string}`,
-	/** The name of the city, district, village, or town.
- */
+	/** The name of the city, district, village, or town. */
 	city?:boolean | `@${string}`,
-	/** The name of the customer's company or organization.
- */
+	/** The name of the customer's company or organization. */
 	company?:boolean | `@${string}`,
-	/** The name of the country.
- */
+	/** The name of the country. */
 	country?:boolean | `@${string}`,
 	/** The two-letter code for the country of the address.
 
@@ -2856,7 +3413,7 @@ formatted?: [{	/** Whether to include the customer's name in the formatted addre
 	withCompany?: boolean | undefined | null | Variable<any, string>},boolean | `@${string}`],
 	/** A comma-separated list of the values for city, province, and country. */
 	formattedArea?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The last name of the customer. */
 	lastName?:boolean | `@${string}`,
@@ -2864,8 +3421,7 @@ formatted?: [{	/** Whether to include the customer's name in the formatted addre
 	latitude?:boolean | `@${string}`,
 	/** The longitude coordinate of the customer address. */
 	longitude?:boolean | `@${string}`,
-	/** The full name of the customer, based on firstName and lastName.
- */
+	/** The full name of the customer, based on firstName and lastName. */
 	name?:boolean | `@${string}`,
 	/** A unique phone number for the customer.
 
@@ -2874,7 +3430,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	phone?:boolean | `@${string}`,
 	/** The region of the address, such as the province, state, or district. */
 	province?:boolean | `@${string}`,
-	/** The two-letter code for the region.
+	/** The alphanumeric code for the region.
 
 For example, ON.
  */
@@ -2903,7 +3459,7 @@ For example, ON.
 	node?:ValueTypes["MailingAddress"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields accepted to create or update a mailing address. */
+	/** The input fields to create or update a mailing address. */
 ["MailingAddressInput"]: {
 	/** The first line of the address. Typically the street address or PO Box number.
  */
@@ -2950,12 +3506,32 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	value?:ValueTypes["PricingValue"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** A group of one or more regions of the world that a merchant is targeting for sales. To learn more about markets, refer to [the Shopify Markets conceptual overview](/docs/apps/markets). */
+["Market"]: AliasType<{
+	/** A human-readable unique string for the market automatically generated from its title.
+ */
+	handle?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
+	key: string | Variable<any, string>},ValueTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Represents a media interface. */
 ["Media"]:AliasType<{
 		/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ValueTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ValueTypes["Image"];
 		['...on ExternalVideo']?: Omit<ValueTypes["ExternalVideo"],keyof ValueTypes["Media"]>;
@@ -2992,22 +3568,35 @@ Formatted using E.164 standard. For example, _+16135551111_.
 ["MediaImage"]: AliasType<{
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The image for the media. */
 	image?:ValueTypes["Image"],
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ValueTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ValueTypes["Image"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** A menu used for navigation within a storefront.
+	/** A media presentation. */
+["MediaPresentation"]: AliasType<{
+asJson?: [{	/** The format to transform the settings. */
+	format: ValueTypes["MediaPresentationFormat"] | Variable<any, string>},boolean | `@${string}`],
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The possible formats for a media presentation. */
+["MediaPresentationFormat"]:MediaPresentationFormat;
+	/** A [navigation menu](https://help.shopify.com/manual/online-store/menus-and-links) representing a hierarchy
+of hyperlinks (items).
  */
 ["Menu"]: AliasType<{
 	/** The menu's handle. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The menu's child items. */
 	items?:ValueTypes["MenuItem"],
@@ -3017,13 +3606,14 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	title?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A menu item within a parent menu.
- */
+	/** A menu item within a parent menu. */
 ["MenuItem"]: AliasType<{
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The menu item's child items. */
 	items?:ValueTypes["MenuItem"],
+	/** The linked resource. */
+	resource?:ValueTypes["MenuItemResource"],
 	/** The ID of the linked resource. */
 	resourceId?:boolean | `@${string}`,
 	/** The menu item's tags to filter a collection. */
@@ -3036,10 +3626,21 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	url?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** The list of possible resources a `MenuItem` can reference.
+ */
+["MenuItemResource"]: AliasType<{		["...on Article"]?: ValueTypes["Article"],
+		["...on Blog"]?: ValueTypes["Blog"],
+		["...on Collection"]?: ValueTypes["Collection"],
+		["...on Metaobject"]?: ValueTypes["Metaobject"],
+		["...on Page"]?: ValueTypes["Page"],
+		["...on Product"]?: ValueTypes["Product"],
+		["...on ShopPolicy"]?: ValueTypes["ShopPolicy"]
+		__typename?: boolean | `@${string}`
+}>;
 	/** A menu item type. */
 ["MenuItemType"]:MenuItemType;
 	/** The merchandise to be purchased at checkout. */
-["Merchandise"]: AliasType<{		["...on ProductVariant"] : ValueTypes["ProductVariant"]
+["Merchandise"]: AliasType<{		["...on ProductVariant"]?: ValueTypes["ProductVariant"]
 		__typename?: boolean | `@${string}`
 }>;
 	/** Metafields represent custom metadata attached to a resource. Metafields can be sorted into namespaces and are
@@ -3050,15 +3651,15 @@ comprised of keys, values, and value types.
 	createdAt?:boolean | `@${string}`,
 	/** The description of a metafield. */
 	description?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-	/** The key name for a metafield. */
+	/** The unique identifier for the metafield within its namespace. */
 	key?:boolean | `@${string}`,
-	/** The namespace for a metafield. */
+	/** The container for a group of metafields that the metafield is associated with. */
 	namespace?:boolean | `@${string}`,
-	/** The parent object that the metafield belongs to. */
+	/** The type of resource that the metafield is attached to. */
 	parentResource?:ValueTypes["MetafieldParentResource"],
-	/** Returns a reference object if the metafield definition's type is a resource reference. */
+	/** Returns a reference object if the metafield's type is a resource reference. */
 	reference?:ValueTypes["MetafieldReference"],
 references?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
@@ -3066,13 +3667,25 @@ references?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>},ValueTypes["MetafieldReferenceConnection"]],
 	/** The type name of the metafield.
-See the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
+Refer to the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
  */
 	type?:boolean | `@${string}`,
-	/** The date and time when the storefront metafield was updated. */
+	/** The date and time when the metafield was last updated. */
 	updatedAt?:boolean | `@${string}`,
-	/** The value of a metafield. */
+	/** The data stored in the metafield. Always stored as a string, regardless of the metafield's type. */
 	value?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Possible error codes that can be returned by `MetafieldDeleteUserError`. */
+["MetafieldDeleteErrorCode"]:MetafieldDeleteErrorCode;
+	/** An error that occurs during the execution of cart metafield deletion. */
+["MetafieldDeleteUserError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The path to the input field that caused the error. */
+	field?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** A filter used to view a subset of products in a collection matching a specific metafield value.
@@ -3092,27 +3705,33 @@ Only the following metafield types are currently supported:
 	value: string | Variable<any, string>
 };
 	/** A resource that the metafield belongs to. */
-["MetafieldParentResource"]: AliasType<{		["...on Article"] : ValueTypes["Article"],
-		["...on Blog"] : ValueTypes["Blog"],
-		["...on Collection"] : ValueTypes["Collection"],
-		["...on Customer"] : ValueTypes["Customer"],
-		["...on Order"] : ValueTypes["Order"],
-		["...on Page"] : ValueTypes["Page"],
-		["...on Product"] : ValueTypes["Product"],
-		["...on ProductVariant"] : ValueTypes["ProductVariant"],
-		["...on Shop"] : ValueTypes["Shop"]
+["MetafieldParentResource"]: AliasType<{		["...on Article"]?: ValueTypes["Article"],
+		["...on Blog"]?: ValueTypes["Blog"],
+		["...on Cart"]?: ValueTypes["Cart"],
+		["...on Collection"]?: ValueTypes["Collection"],
+		["...on Company"]?: ValueTypes["Company"],
+		["...on CompanyLocation"]?: ValueTypes["CompanyLocation"],
+		["...on Customer"]?: ValueTypes["Customer"],
+		["...on Location"]?: ValueTypes["Location"],
+		["...on Market"]?: ValueTypes["Market"],
+		["...on Order"]?: ValueTypes["Order"],
+		["...on Page"]?: ValueTypes["Page"],
+		["...on Product"]?: ValueTypes["Product"],
+		["...on ProductVariant"]?: ValueTypes["ProductVariant"],
+		["...on Shop"]?: ValueTypes["Shop"]
 		__typename?: boolean | `@${string}`
 }>;
 	/** Returns the resource which is being referred to by a metafield.
  */
-["MetafieldReference"]: AliasType<{		["...on Collection"] : ValueTypes["Collection"],
-		["...on GenericFile"] : ValueTypes["GenericFile"],
-		["...on MediaImage"] : ValueTypes["MediaImage"],
-		["...on Metaobject"] : ValueTypes["Metaobject"],
-		["...on Page"] : ValueTypes["Page"],
-		["...on Product"] : ValueTypes["Product"],
-		["...on ProductVariant"] : ValueTypes["ProductVariant"],
-		["...on Video"] : ValueTypes["Video"]
+["MetafieldReference"]: AliasType<{		["...on Collection"]?: ValueTypes["Collection"],
+		["...on GenericFile"]?: ValueTypes["GenericFile"],
+		["...on MediaImage"]?: ValueTypes["MediaImage"],
+		["...on Metaobject"]?: ValueTypes["Metaobject"],
+		["...on Model3d"]?: ValueTypes["Model3d"],
+		["...on Page"]?: ValueTypes["Page"],
+		["...on Product"]?: ValueTypes["Product"],
+		["...on ProductVariant"]?: ValueTypes["ProductVariant"],
+		["...on Video"]?: ValueTypes["Video"]
 		__typename?: boolean | `@${string}`
 }>;
 	/** An auto-generated type for paginating through multiple MetafieldReferences.
@@ -3135,6 +3754,20 @@ Only the following metafield types are currently supported:
 	node?:ValueTypes["MetafieldReference"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** An error that occurs during the execution of `MetafieldsSet`. */
+["MetafieldsSetUserError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The index of the array element that's causing the error. */
+	elementIndex?:boolean | `@${string}`,
+	/** The path to the input field that caused the error. */
+	field?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Possible error codes that can be returned by `MetafieldsSetUserError`. */
+["MetafieldsSetUserErrorCode"]:MetafieldsSetUserErrorCode;
 	/** An instance of a user-defined model based on a MetaobjectDefinition. */
 ["Metaobject"]: AliasType<{
 field?: [{	/** The key of the field. */
@@ -3145,8 +3778,14 @@ Omitted object keys can be assumed null, and no guarantees are made about field 
 	fields?:ValueTypes["MetaobjectField"],
 	/** The unique handle of the metaobject. Useful as a custom ID. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
+	/** The URL used for viewing the metaobject on the shop's Online Store. Returns `null` if the metaobject definition doesn't have the `online_store` capability. */
+	onlineStoreUrl?:boolean | `@${string}`,
+	/** The metaobject's SEO information. Returns `null` if the metaobject definition
+doesn't have the `renderable` capability.
+ */
+	seo?:ValueTypes["MetaobjectSEO"],
 	/** The type of the metaobject. Defines the namespace of its associated metafields. */
 	type?:boolean | `@${string}`,
 	/** The date and time when the metaobject was last updated. */
@@ -3199,14 +3838,24 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	/** The type of the metaobject. */
 	type: string | Variable<any, string>
 };
+	/** SEO information for a metaobject. */
+["MetaobjectSEO"]: AliasType<{
+	/** The meta description. */
+	description?:ValueTypes["MetaobjectField"],
+	/** The SEO title. */
+	title?:ValueTypes["MetaobjectField"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Represents a Shopify hosted 3D model. */
 ["Model3d"]: AliasType<{
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ValueTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ValueTypes["Image"],
 	/** The sources for a 3d model. */
@@ -3225,7 +3874,7 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	url?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields for a monetary value with currency. */
+	/** The input fields for a monetary value with currency. */
 ["MoneyInput"]: {
 	/** Decimal money amount. */
 	amount: ValueTypes["Decimal"] | Variable<any, string>,
@@ -3243,7 +3892,9 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 }>;
 	/** The schema’s entry-point for mutations. This acts as the public, top-level API from which all mutation queries must start. */
 ["Mutation"]: AliasType<{
-cartAttributesUpdate?: [{	/** An array of key-value pairs that contains additional information about the cart. */
+cartAttributesUpdate?: [{	/** An array of key-value pairs that contains additional information about the cart.
+
+The input must not contain more than `250` values. */
 	attributes: Array<ValueTypes["AttributeInput"]> | Variable<any, string>,	/** The ID of the cart. */
 	cartId: string | Variable<any, string>},ValueTypes["CartAttributesUpdatePayload"]],
 cartBuyerIdentityUpdate?: [{	/** The ID of the cart. */
@@ -3256,23 +3907,46 @@ cartCreate?: [{	/** The fields used to create a cart. */
 	input?: ValueTypes["CartInput"] | undefined | null | Variable<any, string>},ValueTypes["CartCreatePayload"]],
 cartDiscountCodesUpdate?: [{	/** The ID of the cart. */
 	cartId: string | Variable<any, string>,	/** The case-insensitive discount codes that the customer added at checkout.
- */
+
+The input must not contain more than `250` values. */
 	discountCodes?: Array<string> | undefined | null | Variable<any, string>},ValueTypes["CartDiscountCodesUpdatePayload"]],
-cartLinesAdd?: [{	/** A list of merchandise lines to add to the cart. */
-	lines: Array<ValueTypes["CartLineInput"]> | Variable<any, string>,	/** The ID of the cart. */
-	cartId: string | Variable<any, string>},ValueTypes["CartLinesAddPayload"]],
+cartLinesAdd?: [{	/** The ID of the cart. */
+	cartId: string | Variable<any, string>,	/** A list of merchandise lines to add to the cart.
+
+The input must not contain more than `250` values. */
+	lines: Array<ValueTypes["CartLineInput"]> | Variable<any, string>},ValueTypes["CartLinesAddPayload"]],
 cartLinesRemove?: [{	/** The ID of the cart. */
-	cartId: string | Variable<any, string>,	/** The merchandise line IDs to remove. */
+	cartId: string | Variable<any, string>,	/** The merchandise line IDs to remove.
+
+The input must not contain more than `250` values. */
 	lineIds: Array<string> | Variable<any, string>},ValueTypes["CartLinesRemovePayload"]],
 cartLinesUpdate?: [{	/** The ID of the cart. */
-	cartId: string | Variable<any, string>,	/** The merchandise lines to update. */
+	cartId: string | Variable<any, string>,	/** The merchandise lines to update.
+
+The input must not contain more than `250` values. */
 	lines: Array<ValueTypes["CartLineUpdateInput"]> | Variable<any, string>},ValueTypes["CartLinesUpdatePayload"]],
+cartMetafieldDelete?: [{	/** The input fields used to delete a cart metafield. */
+	input: ValueTypes["CartMetafieldDeleteInput"] | Variable<any, string>},ValueTypes["CartMetafieldDeletePayload"]],
+cartMetafieldsSet?: [{	/** The list of Cart metafield values to set. Maximum of 25.
+
+The input must not contain more than `250` values. */
+	metafields: Array<ValueTypes["CartMetafieldsSetInput"]> | Variable<any, string>},ValueTypes["CartMetafieldsSetPayload"]],
 cartNoteUpdate?: [{	/** The ID of the cart. */
 	cartId: string | Variable<any, string>,	/** The note on the cart. */
-	note?: string | undefined | null | Variable<any, string>},ValueTypes["CartNoteUpdatePayload"]],
+	note: string | Variable<any, string>},ValueTypes["CartNoteUpdatePayload"]],
+cartPaymentUpdate?: [{	/** The ID of the cart. */
+	cartId: string | Variable<any, string>,	/** The payment information for the cart that will be used at checkout. */
+	payment: ValueTypes["CartPaymentInput"] | Variable<any, string>},ValueTypes["CartPaymentUpdatePayload"]],
 cartSelectedDeliveryOptionsUpdate?: [{	/** The ID of the cart. */
-	cartId: string | Variable<any, string>,	/** The selected delivery options. */
+	cartId: string | Variable<any, string>,	/** The selected delivery options.
+
+The input must not contain more than `250` values. */
 	selectedDeliveryOptions: Array<ValueTypes["CartSelectedDeliveryOptionInput"]> | Variable<any, string>},ValueTypes["CartSelectedDeliveryOptionsUpdatePayload"]],
+cartSubmitForCompletion?: [{	/** The ID of the cart. */
+	cartId: string | Variable<any, string>,	/** The attemptToken is used to guarantee an idempotent result.
+If more than one call uses the same attemptToken within a short period of time, only one will be accepted.
+ */
+	attemptToken: string | Variable<any, string>},ValueTypes["CartSubmitForCompletionPayload"]],
 checkoutAttributesUpdateV2?: [{	/** The ID of the checkout. */
 	checkoutId: string | Variable<any, string>,	/** The checkout attributes to update. */
 	input: ValueTypes["CheckoutAttributesUpdateV2Input"] | Variable<any, string>},ValueTypes["CheckoutAttributesUpdateV2Payload"]],
@@ -3303,20 +3977,30 @@ checkoutEmailUpdateV2?: [{	/** The ID of the checkout. */
 checkoutGiftCardRemoveV2?: [{	/** The ID of the Applied Gift Card to remove from the Checkout. */
 	appliedGiftCardId: string | Variable<any, string>,	/** The ID of the checkout. */
 	checkoutId: string | Variable<any, string>},ValueTypes["CheckoutGiftCardRemoveV2Payload"]],
-checkoutGiftCardsAppend?: [{	/** A list of gift card codes to append to the checkout. */
+checkoutGiftCardsAppend?: [{	/** A list of gift card codes to append to the checkout.
+
+The input must not contain more than `250` values. */
 	giftCardCodes: Array<string> | Variable<any, string>,	/** The ID of the checkout. */
 	checkoutId: string | Variable<any, string>},ValueTypes["CheckoutGiftCardsAppendPayload"]],
-checkoutLineItemsAdd?: [{	/** A list of line item objects to add to the checkout. */
+checkoutLineItemsAdd?: [{	/** A list of line item objects to add to the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems: Array<ValueTypes["CheckoutLineItemInput"]> | Variable<any, string>,	/** The ID of the checkout. */
 	checkoutId: string | Variable<any, string>},ValueTypes["CheckoutLineItemsAddPayload"]],
 checkoutLineItemsRemove?: [{	/** The checkout on which to remove line items. */
-	checkoutId: string | Variable<any, string>,	/** Line item ids to remove. */
+	checkoutId: string | Variable<any, string>,	/** Line item ids to remove.
+
+The input must not contain more than `250` values. */
 	lineItemIds: Array<string> | Variable<any, string>},ValueTypes["CheckoutLineItemsRemovePayload"]],
-checkoutLineItemsReplace?: [{	/** A list of line item objects to set on the checkout. */
+checkoutLineItemsReplace?: [{	/** A list of line item objects to set on the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems: Array<ValueTypes["CheckoutLineItemInput"]> | Variable<any, string>,	/** The ID of the checkout. */
 	checkoutId: string | Variable<any, string>},ValueTypes["CheckoutLineItemsReplacePayload"]],
 checkoutLineItemsUpdate?: [{	/** The checkout on which to update line items. */
-	checkoutId: string | Variable<any, string>,	/** Line items to update. */
+	checkoutId: string | Variable<any, string>,	/** Line items to update.
+
+The input must not contain more than `250` values. */
 	lineItems: Array<ValueTypes["CheckoutLineItemUpdateInput"]> | Variable<any, string>},ValueTypes["CheckoutLineItemsUpdatePayload"]],
 checkoutShippingAddressUpdateV2?: [{	/** The shipping address to where the line items will be shipped. */
 	shippingAddress: ValueTypes["MailingAddressInput"] | Variable<any, string>,	/** The ID of the checkout. */
@@ -3372,10 +4056,11 @@ This interface is used by the [node](https://shopify.dev/api/admin-graphql/unsta
 and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) queries.
  */
 ["Node"]:AliasType<{
-		/** A globally-unique identifier. */
+		/** A globally-unique ID. */
 	id?:boolean | `@${string}`;
 		['...on AppliedGiftCard']?: Omit<ValueTypes["AppliedGiftCard"],keyof ValueTypes["Node"]>;
 		['...on Article']?: Omit<ValueTypes["Article"],keyof ValueTypes["Node"]>;
+		['...on BaseCartLine']?: Omit<ValueTypes["BaseCartLine"],keyof ValueTypes["Node"]>;
 		['...on Blog']?: Omit<ValueTypes["Blog"],keyof ValueTypes["Node"]>;
 		['...on Cart']?: Omit<ValueTypes["Cart"],keyof ValueTypes["Node"]>;
 		['...on CartLine']?: Omit<ValueTypes["CartLine"],keyof ValueTypes["Node"]>;
@@ -3383,11 +4068,17 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 		['...on CheckoutLineItem']?: Omit<ValueTypes["CheckoutLineItem"],keyof ValueTypes["Node"]>;
 		['...on Collection']?: Omit<ValueTypes["Collection"],keyof ValueTypes["Node"]>;
 		['...on Comment']?: Omit<ValueTypes["Comment"],keyof ValueTypes["Node"]>;
+		['...on Company']?: Omit<ValueTypes["Company"],keyof ValueTypes["Node"]>;
+		['...on CompanyContact']?: Omit<ValueTypes["CompanyContact"],keyof ValueTypes["Node"]>;
+		['...on CompanyLocation']?: Omit<ValueTypes["CompanyLocation"],keyof ValueTypes["Node"]>;
+		['...on ComponentizableCartLine']?: Omit<ValueTypes["ComponentizableCartLine"],keyof ValueTypes["Node"]>;
 		['...on ExternalVideo']?: Omit<ValueTypes["ExternalVideo"],keyof ValueTypes["Node"]>;
 		['...on GenericFile']?: Omit<ValueTypes["GenericFile"],keyof ValueTypes["Node"]>;
 		['...on Location']?: Omit<ValueTypes["Location"],keyof ValueTypes["Node"]>;
 		['...on MailingAddress']?: Omit<ValueTypes["MailingAddress"],keyof ValueTypes["Node"]>;
+		['...on Market']?: Omit<ValueTypes["Market"],keyof ValueTypes["Node"]>;
 		['...on MediaImage']?: Omit<ValueTypes["MediaImage"],keyof ValueTypes["Node"]>;
+		['...on MediaPresentation']?: Omit<ValueTypes["MediaPresentation"],keyof ValueTypes["Node"]>;
 		['...on Menu']?: Omit<ValueTypes["Menu"],keyof ValueTypes["Node"]>;
 		['...on MenuItem']?: Omit<ValueTypes["MenuItem"],keyof ValueTypes["Node"]>;
 		['...on Metafield']?: Omit<ValueTypes["Metafield"],keyof ValueTypes["Node"]>;
@@ -3412,19 +4103,22 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 		['...on Article']?: Omit<ValueTypes["Article"],keyof ValueTypes["OnlineStorePublishable"]>;
 		['...on Blog']?: Omit<ValueTypes["Blog"],keyof ValueTypes["OnlineStorePublishable"]>;
 		['...on Collection']?: Omit<ValueTypes["Collection"],keyof ValueTypes["OnlineStorePublishable"]>;
+		['...on Metaobject']?: Omit<ValueTypes["Metaobject"],keyof ValueTypes["OnlineStorePublishable"]>;
 		['...on Page']?: Omit<ValueTypes["Page"],keyof ValueTypes["OnlineStorePublishable"]>;
 		['...on Product']?: Omit<ValueTypes["Product"],keyof ValueTypes["OnlineStorePublishable"]>;
 		__typename?: boolean | `@${string}`
 }>;
 	/** An order is a customer’s completed request to purchase one or more products from a shop. An order is created when a customer completes the checkout process, during which time they provides an email address, billing address and payment information. */
 ["Order"]: AliasType<{
+	/** The address associated with the payment method. */
+	billingAddress?:ValueTypes["MailingAddress"],
 	/** The reason for the order's cancellation. Returns `null` if the order wasn't canceled. */
 	cancelReason?:boolean | `@${string}`,
 	/** The date and time when the order was canceled. Returns null if the order wasn't canceled. */
 	canceledAt?:boolean | `@${string}`,
 	/** The code of the currency used for the payment. */
 	currencyCode?:boolean | `@${string}`,
-	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes are not included unless the order is a taxes-included order. */
+	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes aren't included unless the order is a taxes-included order. */
 	currentSubtotalPrice?:ValueTypes["MoneyV2"],
 	/** The total cost of duties for the order, including refunds. */
 	currentTotalDuties?:ValueTypes["MoneyV2"],
@@ -3432,7 +4126,7 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 	currentTotalPrice?:ValueTypes["MoneyV2"],
 	/** The total of all taxes applied to the order, excluding taxes for returned line items. */
 	currentTotalTax?:ValueTypes["MoneyV2"],
-	/** A list of the custom attributes added to the order. */
+	/** A list of the custom attributes added to the order. For example, whether an order is a customer's first. */
 	customAttributes?:ValueTypes["Attribute"],
 	/** The locale code in which this specific order happened. */
 	customerLocale?:boolean | `@${string}`,
@@ -3452,7 +4146,7 @@ discountApplications?: [{	/** Returns up to the first `n` elements from the list
 	financialStatus?:boolean | `@${string}`,
 	/** The fulfillment status for the order. */
 	fulfillmentStatus?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
@@ -3460,10 +4154,12 @@ lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["OrderLineItemConnection"]],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** Unique identifier for the order that appears on the order.
 For example, _#1000_ or _Store1001.
@@ -3551,7 +4247,7 @@ successfulFulfillments?: [{	/** Truncate the array result to this size. */
 	discountAllocations?:ValueTypes["DiscountAllocation"],
 	/** The total price of the line item, including discounts, and displayed in the presentment currency. */
 	discountedTotalPrice?:ValueTypes["MoneyV2"],
-	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it is displayed in the presentment currency. */
+	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it's displayed in the presentment currency. */
 	originalTotalPrice?:ValueTypes["MoneyV2"],
 	/** The number of products variants associated to the line item. */
 	quantity?:boolean | `@${string}`,
@@ -3593,12 +4289,14 @@ successfulFulfillments?: [{	/** Truncate the array result to this size. */
 	createdAt?:boolean | `@${string}`,
 	/** A human-friendly unique string for the page automatically generated from its title. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -3606,6 +4304,8 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	seo?:ValueTypes["SEO"],
 	/** The title of the page. */
 	title?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 	/** The timestamp of the latest page update. */
 	updatedAt?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
@@ -3661,7 +4361,7 @@ For more information, please read our [GraphQL Pagination Usage Guide](https://s
 	creditCard?:ValueTypes["CreditCard"],
 	/** A message describing a processing error during asynchronous processing. */
 	errorMessage?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** A client-side generated token to identify a payment and perform idempotent operations.
 For more information, refer to
@@ -3688,9 +4388,11 @@ For more information, refer to
 	countryCode?:boolean | `@${string}`,
 	/** The three-letter code for the shop's primary currency. */
 	currencyCode?:boolean | `@${string}`,
-	/** A list of enabled currencies (ISO 4217 format) that the shop accepts. Merchants can enable currencies from their Shopify Payments settings in the Shopify admin. */
+	/** A list of enabled currencies (ISO 4217 format) that the shop accepts.
+Merchants can enable currencies from their Shopify Payments settings in the Shopify admin.
+ */
 	enabledPresentmentCurrencies?:boolean | `@${string}`,
-	/** The shop’s Shopify Payments account id. */
+	/** The shop’s Shopify Payments account ID. */
 	shopifyPaymentsAccountId?:boolean | `@${string}`,
 	/** List of the digital wallets which the shop supports. */
 	supportedDigitalWallets?:boolean | `@${string}`,
@@ -3698,7 +4400,30 @@ For more information, refer to
 }>;
 	/** The valid values for the types of payment token. */
 ["PaymentTokenType"]:PaymentTokenType;
-	/** A filter used to view a subset of products in a collection matching a specific price range. */
+	/** Decides the distribution of results. */
+["PredictiveSearchLimitScope"]:PredictiveSearchLimitScope;
+	/** A predictive search result represents a list of products, collections, pages, articles, and query suggestions
+that matches the predictive search query.
+ */
+["PredictiveSearchResult"]: AliasType<{
+	/** The articles that match the search query. */
+	articles?:ValueTypes["Article"],
+	/** The articles that match the search query. */
+	collections?:ValueTypes["Collection"],
+	/** The pages that match the search query. */
+	pages?:ValueTypes["Page"],
+	/** The products that match the search query. */
+	products?:ValueTypes["Product"],
+	/** The query suggestions that are relevant to the search query. */
+	queries?:ValueTypes["SearchQuerySuggestion"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The types of search items to perform predictive search on. */
+["PredictiveSearchType"]:PredictiveSearchType;
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+["PreferenceDeliveryMethodType"]:PreferenceDeliveryMethodType;
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific price range.
+ */
 ["PriceRangeFilter"]: {
 	/** The minimum price in the range. Defaults to zero. */
 	min?: number | undefined | null | Variable<any, string>,
@@ -3712,12 +4437,21 @@ For more information, refer to
 		__typename?: boolean | `@${string}`
 }>;
 	/** The price value (fixed or percentage) for a discount application. */
-["PricingValue"]: AliasType<{		["...on MoneyV2"] : ValueTypes["MoneyV2"],
-		["...on PricingPercentageValue"] : ValueTypes["PricingPercentageValue"]
+["PricingValue"]: AliasType<{		["...on MoneyV2"]?: ValueTypes["MoneyV2"],
+		["...on PricingPercentageValue"]?: ValueTypes["PricingPercentageValue"]
 		__typename?: boolean | `@${string}`
 }>;
-	/** A product represents an individual item for sale in a Shopify store. Products are often physical, but they don't have to be.
-For example, a digital download (such as a movie, music or ebook file) also qualifies as a product, as do services (such as equipment rental, work for hire, customization of another product or an extended warranty). */
+	/** The `Product` object lets you manage products in a merchant’s store.
+
+Products are the goods and services that merchants offer to customers.
+They can include various details such as title, description, price, images, and options such as size or color.
+You can use [product variants](/docs/api/storefront/latest/objects/ProductVariant)
+to create or update different versions of the same product.
+You can also add or update product [media](/docs/api/storefront/latest/interfaces/Media).
+Products can be organized by grouping them into a [collection](/docs/api/storefront/latest/objects/Collection).
+
+Learn more about working with [products and collections](/docs/storefronts/headless/building-with-the-storefront-api/products-collections).
+ */
 ["Product"]: AliasType<{
 	/** Indicates if at least one product variant is available for sale. */
 	availableForSale?:boolean | `@${string}`,
@@ -3727,24 +4461,28 @@ collections?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["CollectionConnection"]],
-	/** The compare at price of the product across all variants. */
+	/** The [compare-at price range](https://help.shopify.com/manual/products/details/product-pricing/sale-pricing) of the product in the shop's default currency. */
 	compareAtPriceRange?:ValueTypes["ProductPriceRange"],
 	/** The date and time when the product was created. */
 	createdAt?:boolean | `@${string}`,
-description?: [{	/** Truncates string after the given length. */
+description?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null | Variable<any, string>},boolean | `@${string}`],
-	/** The description of the product, complete with HTML formatting. */
+	/** The description of the product, with
+HTML tags. For example, the description might include
+bold `<strong></strong>` and italic `<i></i>` text.
+ */
 	descriptionHtml?:boolean | `@${string}`,
 	/** The featured image for the product.
 
 This field is functionally equivalent to `images(first: 1)`.
  */
 	featuredImage?:ValueTypes["Image"],
-	/** A human-friendly unique string for the Product automatically generated from its title.
-They are used by the Liquid templating language to refer to objects.
+	/** A unique, human-readable string of the product's title.
+A handle can contain letters, hyphens (`-`), and numbers, but no spaces.
+The handle is used in the online store URL for the product.
  */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 images?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
@@ -3762,22 +4500,31 @@ media?: [{	/** Returns up to the first `n` elements from the list. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
 	sortKey?: ValueTypes["ProductMediaSortKeys"] | undefined | null | Variable<any, string>},ValueTypes["MediaConnection"]],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
-	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
+	/** The product's URL on the online store.
+If `null`, then the product isn't published to the online store sales channel.
+ */
 	onlineStoreUrl?:boolean | `@${string}`,
 options?: [{	/** Truncate the array result to this size. */
 	first?: number | undefined | null | Variable<any, string>},ValueTypes["ProductOption"]],
-	/** The price range. */
+	/** The minimum and maximum prices of a product, expressed in decimal numbers.
+For example, if the product is priced between $10.00 and $50.00,
+then the price range is $10.00 - $50.00.
+ */
 	priceRange?:ValueTypes["ProductPriceRange"],
-	/** A categorization that a product can be tagged with, commonly used for filtering and searching. */
+	/** The [product type](https://help.shopify.com/manual/products/details/product-type)
+that merchants define.
+ */
 	productType?:boolean | `@${string}`,
 	/** The date and time when the product was published to the channel. */
 	publishedAt?:boolean | `@${string}`,
-	/** Whether the product can only be purchased with a selling plan. */
+	/** Whether the product can only be purchased with a [selling plan](/docs/apps/build/purchase-options/subscriptions/selling-plans). Products that are sold on subscription (`requiresSellingPlan: true`) can be updated only for online stores. If you update a product to be subscription-only (`requiresSellingPlan:false`), then the product is unpublished from all channels, except the online store. */
 	requiresSellingPlan?:boolean | `@${string}`,
 sellingPlanGroups?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
@@ -3785,24 +4532,39 @@ sellingPlanGroups?: [{	/** Returns up to the first `n` elements from the list. *
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["SellingPlanGroupConnection"]],
-	/** The product's SEO information. */
+	/** The [SEO title and description](https://help.shopify.com/manual/promoting-marketing/seo/adding-keywords)
+that are associated with a product.
+ */
 	seo?:ValueTypes["SEO"],
-	/** A comma separated list of tags that have been added to the product.
-Additional access scope required for private apps: unauthenticated_read_product_tags.
+	/** A comma-separated list of searchable keywords that are
+associated with the product. For example, a merchant might apply the `sports`
+and `summer` tags to products that are associated with sportwear for summer.
+Updating `tags` overwrites any existing tags that were previously added to the product.
+To add new tags without overwriting existing tags,
+use the GraphQL Admin API's [`tagsAdd`](/docs/api/admin-graphql/latest/mutations/tagsadd)
+mutation.
  */
 	tags?:boolean | `@${string}`,
-	/** The product’s title. */
+	/** The name for the product that displays to customers. The title is used to construct the product's handle.
+For example, if a product is titled "Black Sunglasses", then the handle is `black-sunglasses`.
+ */
 	title?:boolean | `@${string}`,
-	/** The total quantity of inventory in stock for this Product. */
+	/** The quantity of inventory that's in stock. */
 	totalInventory?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 	/** The date and time when the product was last modified.
 A product's `updatedAt` value can change for different reasons. For example, if an order
 is placed for a product that has inventory tracking set up, then the inventory adjustment
 is counted as an update.
  */
 	updatedAt?:boolean | `@${string}`,
-variantBySelectedOptions?: [{	/** The input fields used for a selected option. */
-	selectedOptions: Array<ValueTypes["SelectedOptionInput"]> | Variable<any, string>},ValueTypes["ProductVariant"]],
+variantBySelectedOptions?: [{	/** The input fields used for a selected option.
+
+The input must not contain more than `250` values. */
+	selectedOptions: Array<ValueTypes["SelectedOptionInput"]> | Variable<any, string>,	/** Whether to ignore unknown product options. */
+	ignoreUnknownOptions?: boolean | undefined | null | Variable<any, string>,	/** Whether to perform case insensitive match on option names and values. */
+	caseInsensitiveMatch?: boolean | undefined | null | Variable<any, string>},ValueTypes["ProductVariant"]],
 variants?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
@@ -3810,7 +4572,7 @@ variants?: [{	/** Returns up to the first `n` elements from the list. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
 	sortKey?: ValueTypes["ProductVariantSortKeys"] | undefined | null | Variable<any, string>},ValueTypes["ProductVariantConnection"]],
-	/** The product’s vendor name. */
+	/** The name of the product's vendor. */
 	vendor?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
@@ -3838,7 +4600,10 @@ variants?: [{	/** Returns up to the first `n` elements from the list. */
 	node?:ValueTypes["Product"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** A filter used to view a subset of products in a collection. */
+	/** The input fields for a filter used to view a subset of products in a collection.
+By default, the `available` and `price` filters are enabled. Filters are customized with the Shopify Search & Discovery app.
+Learn more about [customizing storefront filtering](https://help.shopify.com/manual/online-store/themes/customizing-themes/storefront-filters).
+ */
 ["ProductFilter"]: {
 	/** Filter on if the product is available for sale. */
 	available?: boolean | undefined | null | Variable<any, string>,
@@ -3866,7 +4631,7 @@ Variants are selected based on permutations of these options.
 255 characters limit each.
  */
 ["ProductOption"]: AliasType<{
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The product option’s name. */
 	name?:boolean | `@${string}`,
@@ -3882,9 +4647,14 @@ Variants are selected based on permutations of these options.
 	minVariantPrice?:ValueTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The recommendation intent that is used to generate product recommendations.
+You can use intent to generate product recommendations according to different strategies.
+ */
+["ProductRecommendationIntent"]:ProductRecommendationIntent;
 	/** The set of valid sort keys for the Product query. */
 ["ProductSortKeys"]:ProductSortKeys;
-	/** A product variant represents a different version of a product, such as differing sizes or differing colors. */
+	/** A product variant represents a different version of a product, such as differing sizes or differing colors.
+ */
 ["ProductVariant"]: AliasType<{
 	/** Indicates if the product variant is available for sale. */
 	availableForSale?:boolean | `@${string}`,
@@ -3896,15 +4666,16 @@ Variants are selected based on permutations of these options.
 	compareAtPriceV2?:ValueTypes["MoneyV2"],
 	/** Whether a product is out of stock but still available for purchase (used for backorders). */
 	currentlyNotInStock?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-	/** Image associated with the product variant. This field falls back to the product image if no image is available.
- */
+	/** Image associated with the product variant. This field falls back to the product image if no image is available. */
 	image?:ValueTypes["Image"],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** The product variant’s price. */
 	price?:ValueTypes["MoneyV2"],
@@ -3914,6 +4685,13 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	product?:ValueTypes["Product"],
 	/** The total sellable quantity of the variant for online sales channels. */
 	quantityAvailable?:boolean | `@${string}`,
+quantityPriceBreaks?: [{	/** Returns up to the first `n` elements from the list. */
+	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
+	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
+	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
+	before?: string | undefined | null | Variable<any, string>},ValueTypes["QuantityPriceBreakConnection"]],
+	/** The quantity rule for the product variant in a given context. */
+	quantityRule?:ValueTypes["QuantityRule"],
 	/** Whether a customer needs to provide a shipping address when placing an order for the product variant. */
 	requiresShipping?:boolean | `@${string}`,
 	/** List of product options applied to the variant. */
@@ -3926,13 +4704,15 @@ sellingPlanAllocations?: [{	/** Returns up to the first `n` elements from the li
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["SellingPlanAllocationConnection"]],
 	/** The SKU (stock keeping unit) associated with the variant. */
 	sku?:boolean | `@${string}`,
-storeAvailability?: [{	/** Returns up to the first `n` elements from the list. */
+storeAvailability?: [{	/** Used to sort results based on proximity to the provided location. */
+	near?: ValueTypes["GeoCoordinateInput"] | undefined | null | Variable<any, string>,	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null | Variable<any, string>,	/** Used to sort results based on proximity to the provided location. */
-	near?: ValueTypes["GeoCoordinateInput"] | undefined | null | Variable<any, string>},ValueTypes["StoreAvailabilityConnection"]],
+	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["StoreAvailabilityConnection"]],
+	/** Whether tax is charged when the product variant is sold. */
+	taxable?:boolean | `@${string}`,
 	/** The product variant’s title. */
 	title?:boolean | `@${string}`,
 	/** The unit price value for the variant based on the variant's measurement. */
@@ -3967,29 +4747,93 @@ storeAvailability?: [{	/** Returns up to the first `n` elements from the list. *
 }>;
 	/** The set of valid sort keys for the ProductVariant query. */
 ["ProductVariantSortKeys"]:ProductVariantSortKeys;
+	/** Represents information about the buyer that is interacting with the cart. */
+["PurchasingCompany"]: AliasType<{
+	/** The company associated to the order or draft order. */
+	company?:ValueTypes["Company"],
+	/** The company contact associated to the order or draft order. */
+	contact?:ValueTypes["CompanyContact"],
+	/** The company location associated to the order or draft order. */
+	location?:ValueTypes["CompanyLocation"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** Quantity price breaks lets you offer different rates that are based on the
+amount of a specific variant being ordered.
+ */
+["QuantityPriceBreak"]: AliasType<{
+	/** Minimum quantity required to reach new quantity break price.
+ */
+	minimumQuantity?:boolean | `@${string}`,
+	/** The price of variant after reaching the minimum quanity.
+ */
+	price?:ValueTypes["MoneyV2"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type for paginating through multiple QuantityPriceBreaks.
+ */
+["QuantityPriceBreakConnection"]: AliasType<{
+	/** A list of edges. */
+	edges?:ValueTypes["QuantityPriceBreakEdge"],
+	/** A list of the nodes contained in QuantityPriceBreakEdge. */
+	nodes?:ValueTypes["QuantityPriceBreak"],
+	/** Information to aid in pagination. */
+	pageInfo?:ValueTypes["PageInfo"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type which holds one QuantityPriceBreak and a cursor during pagination.
+ */
+["QuantityPriceBreakEdge"]: AliasType<{
+	/** A cursor for use in pagination. */
+	cursor?:boolean | `@${string}`,
+	/** The item at the end of QuantityPriceBreakEdge. */
+	node?:ValueTypes["QuantityPriceBreak"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The quantity rule for the product variant in a given context.
+ */
+["QuantityRule"]: AliasType<{
+	/** The value that specifies the quantity increment between minimum and maximum of the rule.
+Only quantities divisible by this value will be considered valid.
+
+The increment must be lower than or equal to the minimum and the maximum, and both minimum and maximum
+must be divisible by this value.
+ */
+	increment?:boolean | `@${string}`,
+	/** An optional value that defines the highest allowed quantity purchased by the customer.
+If defined, maximum must be lower than or equal to the minimum and must be a multiple of the increment.
+ */
+	maximum?:boolean | `@${string}`,
+	/** The value that defines the lowest allowed quantity purchased by the customer.
+The minimum must be a multiple of the quantity rule's increment.
+ */
+	minimum?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
 	/** The schema’s entry-point for queries. This acts as the public, top-level API from which all queries must start. */
 ["QueryRoot"]: AliasType<{
+article?: [{	/** The ID of the `Article`. */
+	id: string | Variable<any, string>},ValueTypes["Article"]],
 articles?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["ArticleSortKeys"] | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `author`
- - `blog_title`
- - `created_at`
- - `tag`
- - `tag_not`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ValueTypes["ArticleSortKeys"] | undefined | null | Variable<any, string>,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| author |
+| blog_title |
+| created_at |
+| tag |
+| tag_not |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["ArticleConnection"]],
-blog?: [{	/** The ID of the `Blog`. */
-	id?: string | undefined | null | Variable<any, string>,	/** The handle of the `Blog`. */
-	handle?: string | undefined | null | Variable<any, string>},ValueTypes["Blog"]],
+blog?: [{	/** The handle of the `Blog`. */
+	handle?: string | undefined | null | Variable<any, string>,	/** The ID of the `Blog`. */
+	id?: string | undefined | null | Variable<any, string>},ValueTypes["Blog"]],
 blogByHandle?: [{	/** The handle of the blog. */
 	handle: string | Variable<any, string>},ValueTypes["Blog"]],
 blogs?: [{	/** Returns up to the first `n` elements from the list. */
@@ -3998,18 +4842,20 @@ blogs?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["BlogSortKeys"] | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `created_at`
- - `handle`
- - `title`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ValueTypes["BlogSortKeys"] | undefined | null | Variable<any, string>,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| created_at |
+| handle |
+| title |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["BlogConnection"]],
 cart?: [{	/** The ID of the cart. */
 	id: string | Variable<any, string>},ValueTypes["Cart"]],
+cartCompletionAttempt?: [{	/** The ID of the attempt. */
+	attemptId: string | Variable<any, string>},ValueTypes["CartCompletionAttemptResult"]],
 collection?: [{	/** The ID of the `Collection`. */
 	id?: string | undefined | null | Variable<any, string>,	/** The handle of the `Collection`. */
 	handle?: string | undefined | null | Variable<any, string>},ValueTypes["Collection"]],
@@ -4021,13 +4867,13 @@ collections?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["CollectionSortKeys"] | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `collection_type`
- - `title`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ValueTypes["CollectionSortKeys"] | undefined | null | Variable<any, string>,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| collection_type |
+| title |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["CollectionConnection"]],
 customer?: [{	/** The customer access token. */
@@ -4042,7 +4888,7 @@ locations?: [{	/** Returns up to the first `n` elements from the list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
 	sortKey?: ValueTypes["LocationSortKeys"] | undefined | null | Variable<any, string>,	/** Used to sort results based on proximity to the provided location. */
 	near?: ValueTypes["GeoCoordinateInput"] | undefined | null | Variable<any, string>},ValueTypes["LocationConnection"]],
-menu?: [{	/** Returns a storefront menu by the specified handle. */
+menu?: [{	/** The navigation menu's handle. */
 	handle: string | Variable<any, string>},ValueTypes["Menu"]],
 metaobject?: [{	/** The ID of the metaobject. */
 	id?: string | undefined | null | Variable<any, string>,	/** The handle and type of the metaobject. */
@@ -4057,11 +4903,13 @@ metaobjects?: [{	/** The type of metaobject to retrieve. */
 	reverse?: boolean | undefined | null | Variable<any, string>},ValueTypes["MetaobjectConnection"]],
 node?: [{	/** The ID of the Node to return. */
 	id: string | Variable<any, string>},ValueTypes["Node"]],
-nodes?: [{	/** The IDs of the Nodes to return. */
+nodes?: [{	/** The IDs of the Nodes to return.
+
+The input must not contain more than `250` values. */
 	ids: Array<string> | Variable<any, string>},ValueTypes["Node"]],
-page?: [{	/** The ID of the `Page`. */
-	id?: string | undefined | null | Variable<any, string>,	/** The handle of the `Page`. */
-	handle?: string | undefined | null | Variable<any, string>},ValueTypes["Page"]],
+page?: [{	/** The handle of the `Page`. */
+	handle?: string | undefined | null | Variable<any, string>,	/** The ID of the `Page`. */
+	id?: string | undefined | null | Variable<any, string>},ValueTypes["Page"]],
 pageByHandle?: [{	/** The handle of the page. */
 	handle: string | Variable<any, string>},ValueTypes["Page"]],
 pages?: [{	/** Returns up to the first `n` elements from the list. */
@@ -4070,23 +4918,38 @@ pages?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["PageSortKeys"] | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `created_at`
- - `handle`
- - `title`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ValueTypes["PageSortKeys"] | undefined | null | Variable<any, string>,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| created_at |
+| handle |
+| title |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["PageConnection"]],
+predictiveSearch?: [{	/** Limits the number of results based on `limit_scope`. The value can range from 1 to 10, and the default is 10. */
+	limit?: number | undefined | null | Variable<any, string>,	/** Decides the distribution of results. */
+	limitScope?: ValueTypes["PredictiveSearchLimitScope"] | undefined | null | Variable<any, string>,	/** The search query. */
+	query: string | Variable<any, string>,	/** Specifies the list of resource fields to use for search. The default fields searched on are TITLE, PRODUCT_TYPE, VARIANT_TITLE, and VENDOR. For the best search experience, you should search on the default field set.
+
+The input must not contain more than `250` values. */
+	searchableFields?: Array<ValueTypes["SearchableField"]> | undefined | null | Variable<any, string>,	/** The types of resources to search for.
+
+The input must not contain more than `250` values. */
+	types?: Array<ValueTypes["PredictiveSearchType"]> | undefined | null | Variable<any, string>,	/** Specifies how unavailable products are displayed in the search results. */
+	unavailableProducts?: ValueTypes["SearchUnavailableProductsType"] | undefined | null | Variable<any, string>},ValueTypes["PredictiveSearchResult"]],
 product?: [{	/** The ID of the `Product`. */
 	id?: string | undefined | null | Variable<any, string>,	/** The handle of the `Product`. */
 	handle?: string | undefined | null | Variable<any, string>},ValueTypes["Product"]],
-productByHandle?: [{	/** A unique string that identifies the product. Handles are automatically generated based on the product's title, and are always lowercase. Whitespace and special characters are replaced with a hyphen: `-`. If there are multiple consecutive whitespace or special characters, then they're replaced with a single hyphen. Whitespace or special characters at the beginning are removed. If a duplicate product title is used, then the handle is auto-incremented by one. For example, if you had two products called `Potion`, then their handles would be `potion` and `potion-1`. After a product has been created, changing the product title doesn't update the handle. */
+productByHandle?: [{	/** A unique, human-readable string of the product's title.
+A handle can contain letters, hyphens (`-`), and numbers, but no spaces.
+The handle is used in the online store URL for the product.
+ */
 	handle: string | Variable<any, string>},ValueTypes["Product"]],
 productRecommendations?: [{	/** The id of the product. */
-	productId: string | Variable<any, string>},ValueTypes["Product"]],
+	productId: string | Variable<any, string>,	/** The recommendation intent that is used to generate product recommendations. You can use intent to generate product recommendations on various pages across the channels, according to different strategies. */
+	intent?: ValueTypes["ProductRecommendationIntent"] | undefined | null | Variable<any, string>},ValueTypes["Product"]],
 productTags?: [{	/** Returns up to the first `n` elements from the list. */
 	first: number | Variable<any, string>},ValueTypes["StringConnection"]],
 productTypes?: [{	/** Returns up to the first `n` elements from the list. */
@@ -4097,23 +4960,39 @@ products?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
-	sortKey?: ValueTypes["ProductSortKeys"] | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `available_for_sale`
- - `created_at`
- - `product_type`
- - `tag`
- - `tag_not`
- - `title`
- - `updated_at`
- - `variants.price`
- - `vendor`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ValueTypes["ProductSortKeys"] | undefined | null | Variable<any, string>,	/** You can apply one or multiple filters to a query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| available_for_sale | Filter by products that have at least one product variant available for sale. |
+| created_at | Filter by the date and time when the product was created. | | | - `created_at:>'2020-10-21T23:39:20Z'`<br/> - `created_at:<now`<br/> - `created_at:<=2024` |
+| product_type | Filter by a comma-separated list of [product types](https://help.shopify.com/en/manual/products/details/product-type). | | | `product_type:snowboard` |
+| tag | Filter products by the product [`tags`](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-tags) field. | | | `tag:my_tag` |
+| tag_not | Filter by products that don't have the specified product [tags](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-tags). | | | `tag_not:my_tag` |
+| title | Filter by the product [`title`](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-title) field. | | | `title:The Minimal Snowboard` |
+| updated_at | Filter by the date and time when the product was last updated. | | | - `updated_at:>'2020-10-21T23:39:20Z'`<br/> - `updated_at:<now`<br/> - `updated_at:<=2024` |
+| variants.price | Filter by the price of the product's variants. |
+| vendor | Filter by the product [`vendor`](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-vendor) field. | | | - `vendor:Snowdevil`<br/> - `vendor:Snowdevil OR vendor:Icedevil` |
+Learn more about [Shopify API search syntax](https://shopify.dev/api/usage/search-syntax).
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["ProductConnection"]],
 	/** The list of public Storefront API versions, including supported, release candidate and unstable versions. */
 	publicApiVersions?:ValueTypes["ApiVersion"],
+search?: [{	/** Returns up to the first `n` elements from the list. */
+	first?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come after the specified cursor. */
+	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
+	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
+	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
+	reverse?: boolean | undefined | null | Variable<any, string>,	/** Sort the underlying list by the given key. */
+	sortKey?: ValueTypes["SearchSortKeys"] | undefined | null | Variable<any, string>,	/** The search query. */
+	query: string | Variable<any, string>,	/** Specifies whether to perform a partial word match on the last search term. */
+	prefix?: ValueTypes["SearchPrefixQueryType"] | undefined | null | Variable<any, string>,	/** Returns a subset of products matching all product filters.
+
+The input must not contain more than `250` values. */
+	productFilters?: Array<ValueTypes["ProductFilter"]> | undefined | null | Variable<any, string>,	/** The types of resources to search for.
+
+The input must not contain more than `250` values. */
+	types?: Array<ValueTypes["SearchType"]> | undefined | null | Variable<any, string>,	/** Specifies how unavailable products or variants are displayed in the search results. */
+	unavailableProducts?: ValueTypes["SearchUnavailableProductsType"] | undefined | null | Variable<any, string>},ValueTypes["SearchResultItemConnection"]],
 	/** The shop associated with the storefront access token. */
 	shop?:ValueTypes["Shop"],
 urlRedirects?: [{	/** Returns up to the first `n` elements from the list. */
@@ -4121,13 +5000,13 @@ urlRedirects?: [{	/** Returns up to the first `n` elements from the list. */
 	after?: string | undefined | null | Variable<any, string>,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null | Variable<any, string>,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null | Variable<any, string>,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null | Variable<any, string>,	/** Supported filter parameters:
- - `created_at`
- - `path`
- - `target`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	reverse?: boolean | undefined | null | Variable<any, string>,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| created_at |
+| path |
+| target |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null | Variable<any, string>},ValueTypes["UrlRedirectConnection"]],
 		__typename?: boolean | `@${string}`
@@ -4156,6 +5035,57 @@ was created by a Shopify Script.
 	value?:ValueTypes["PricingValue"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Specifies whether to perform a partial word match on the last search term. */
+["SearchPrefixQueryType"]:SearchPrefixQueryType;
+	/** A search query suggestion. */
+["SearchQuerySuggestion"]: AliasType<{
+	/** The text of the search query suggestion with highlighted HTML tags. */
+	styledText?:boolean | `@${string}`,
+	/** The text of the search query suggestion. */
+	text?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A search result that matches the search query.
+ */
+["SearchResultItem"]: AliasType<{		["...on Article"]?: ValueTypes["Article"],
+		["...on Page"]?: ValueTypes["Page"],
+		["...on Product"]?: ValueTypes["Product"]
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type for paginating through multiple SearchResultItems.
+ */
+["SearchResultItemConnection"]: AliasType<{
+	/** A list of edges. */
+	edges?:ValueTypes["SearchResultItemEdge"],
+	/** A list of the nodes contained in SearchResultItemEdge. */
+	nodes?:ValueTypes["SearchResultItem"],
+	/** Information to aid in pagination. */
+	pageInfo?:ValueTypes["PageInfo"],
+	/** A list of available filters. */
+	productFilters?:ValueTypes["Filter"],
+	/** The total number of results. */
+	totalCount?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type which holds one SearchResultItem and a cursor during pagination.
+ */
+["SearchResultItemEdge"]: AliasType<{
+	/** A cursor for use in pagination. */
+	cursor?:boolean | `@${string}`,
+	/** The item at the end of SearchResultItemEdge. */
+	node?:ValueTypes["SearchResultItem"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The set of valid sort keys for the search query. */
+["SearchSortKeys"]:SearchSortKeys;
+	/** The types of search items to perform search within. */
+["SearchType"]:SearchType;
+	/** Specifies whether to display results for unavailable products. */
+["SearchUnavailableProductsType"]:SearchUnavailableProductsType;
+	/** Specifies the list of resource fields to search. */
+["SearchableField"]:SearchableField;
 	/** Properties used by customers to select a product variant.
 Products can have multiple options, like different sizes or colors.
  */
@@ -4166,7 +5096,7 @@ Products can have multiple options, like different sizes or colors.
 	value?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required for a selected option. */
+	/** The input fields required for a selected option. */
 ["SelectedOptionInput"]: {
 	/** The product option’s name. */
 	name: string | Variable<any, string>,
@@ -4179,7 +5109,7 @@ Products can have multiple options, like different sizes or colors.
 	checkoutCharge?:ValueTypes["SellingPlanCheckoutCharge"],
 	/** The description of the selling plan. */
 	description?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The name of the selling plan. For example, '6 weeks of prepaid granola, delivered weekly'. */
 	name?:boolean | `@${string}`,
@@ -4252,8 +5182,8 @@ Products can have multiple options, like different sizes or colors.
 	/** The checkout charge when the full amount isn't charged at checkout. */
 ["SellingPlanCheckoutChargeType"]:SellingPlanCheckoutChargeType;
 	/** The portion of the price to be charged at checkout. */
-["SellingPlanCheckoutChargeValue"]: AliasType<{		["...on MoneyV2"] : ValueTypes["MoneyV2"],
-		["...on SellingPlanCheckoutChargePercentageValue"] : ValueTypes["SellingPlanCheckoutChargePercentageValue"]
+["SellingPlanCheckoutChargeValue"]: AliasType<{		["...on MoneyV2"]?: ValueTypes["MoneyV2"],
+		["...on SellingPlanCheckoutChargePercentageValue"]?: ValueTypes["SellingPlanCheckoutChargePercentageValue"]
 		__typename?: boolean | `@${string}`
 }>;
 	/** An auto-generated type for paginating through multiple SellingPlans.
@@ -4357,9 +5287,9 @@ Individual selling plans contribute their options to the associated selling plan
 		__typename?: boolean | `@${string}`
 }>;
 	/** Represents by how much the price of a variant associated with a selling plan is adjusted. Each variant can have up to two price adjustments. */
-["SellingPlanPriceAdjustmentValue"]: AliasType<{		["...on SellingPlanFixedAmountPriceAdjustment"] : ValueTypes["SellingPlanFixedAmountPriceAdjustment"],
-		["...on SellingPlanFixedPriceAdjustment"] : ValueTypes["SellingPlanFixedPriceAdjustment"],
-		["...on SellingPlanPercentagePriceAdjustment"] : ValueTypes["SellingPlanPercentagePriceAdjustment"]
+["SellingPlanPriceAdjustmentValue"]: AliasType<{		["...on SellingPlanFixedAmountPriceAdjustment"]?: ValueTypes["SellingPlanFixedAmountPriceAdjustment"],
+		["...on SellingPlanFixedPriceAdjustment"]?: ValueTypes["SellingPlanFixedPriceAdjustment"],
+		["...on SellingPlanPercentagePriceAdjustment"]?: ValueTypes["SellingPlanPercentagePriceAdjustment"]
 		__typename?: boolean | `@${string}`
 }>;
 	/** A shipping rate to be applied to a checkout. */
@@ -4380,12 +5310,14 @@ Individual selling plans contribute their options to the associated selling plan
 	brand?:ValueTypes["Brand"],
 	/** A description of the shop. */
 	description?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string | Variable<any, string>,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null | Variable<any, string>,	/** The identifier for the metafield. */
 	key: string | Variable<any, string>},ValueTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ValueTypes["HasMetafieldsIdentifier"]> | Variable<any, string>},ValueTypes["Metafield"]],
 	/** A string representing the way currency is formatted when the currency isn’t specified. */
 	moneyFormat?:boolean | `@${string}`,
@@ -4409,13 +5341,21 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	termsOfService?:ValueTypes["ShopPolicy"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for submitting Shop Pay payment method information for checkout.
+ */
+["ShopPayWalletContentInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ValueTypes["MailingAddressInput"] | Variable<any, string>,
+	/** Session token for transaction. */
+	sessionToken: string | Variable<any, string>
+};
 	/** Policy that a merchant has configured for their store, such as their refund or privacy policy. */
 ["ShopPolicy"]: AliasType<{
 	/** Policy text, maximum size of 64kb. */
 	body?:boolean | `@${string}`,
 	/** Policy’s handle. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** Policy’s title. */
 	title?:boolean | `@${string}`,
@@ -4432,7 +5372,7 @@ Otherwise, the policy will return the merchant-configured value.
 	body?:boolean | `@${string}`,
 	/** The handle of the policy. */
 	handle?:boolean | `@${string}`,
-	/** The unique identifier of the policy. A default policy doesn't have an ID. */
+	/** The unique ID of the policy. A default policy doesn't have an ID. */
 	id?:boolean | `@${string}`,
 	/** The title of the policy. */
 	title?:boolean | `@${string}`,
@@ -4450,6 +5390,8 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	location?:ValueTypes["Location"],
 	/** Returns the estimated amount of time it takes for pickup to be ready (Example: Usually ready in 24 hours). */
 	pickUpTime?:boolean | `@${string}`,
+	/** The quantity of the product variant in-stock at this location. */
+	quantityAvailable?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** An auto-generated type for paginating through multiple StoreAvailabilities.
@@ -4472,7 +5414,7 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	node?:ValueTypes["StoreAvailability"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** An auto-generated type for paginating through a list of Strings.
+	/** An auto-generated type for paginating through multiple Strings.
  */
 ["StringConnection"]: AliasType<{
 	/** A list of edges. */
@@ -4490,6 +5432,53 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	node?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** An error that occurred during cart submit for completion. */
+["SubmissionError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The code of the error that occurred during cart submit for completion. */
+["SubmissionErrorCode"]:SubmissionErrorCode;
+	/** Cart submit for checkout completion is successful. */
+["SubmitAlreadyAccepted"]: AliasType<{
+	/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Cart submit for checkout completion failed. */
+["SubmitFailed"]: AliasType<{
+	/** The URL of the checkout for the cart. */
+	checkoutUrl?:boolean | `@${string}`,
+	/** The list of errors that occurred from executing the mutation. */
+	errors?:ValueTypes["SubmissionError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** Cart submit for checkout completion is already accepted. */
+["SubmitSuccess"]: AliasType<{
+	/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Cart submit for checkout completion is throttled. */
+["SubmitThrottled"]: AliasType<{
+	/** UTC date time string that indicates the time after which clients should make their next
+poll request. Any poll requests sent before this time will be ignored. Use this value to schedule the
+next poll request.
+ */
+	pollAfter?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Color and image for visual representation. */
+["Swatch"]: AliasType<{
+	/** The swatch color. */
+	color?:boolean | `@${string}`,
+	/** The swatch image. */
+	image?:ValueTypes["MediaImage"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Specifies the fields required to complete a checkout with
 a tokenized payment.
  */
@@ -4502,13 +5491,24 @@ a tokenized payment.
 	billingAddress: ValueTypes["MailingAddressInput"] | Variable<any, string>,
 	/** A simple string or JSON containing the required payment data for the tokenized payment. */
 	paymentData: string | Variable<any, string>,
-	/** Whether to execute the payment in test mode, if possible. Test mode is not supported in production stores. Defaults to `false`. */
+	/** Whether to execute the payment in test mode, if possible. Test mode isn't supported in production stores. Defaults to `false`. */
 	test?: boolean | undefined | null | Variable<any, string>,
 	/** Public Hash Key used for AndroidPay payments only. */
 	identifier?: string | undefined | null | Variable<any, string>,
 	/** The type of payment token. */
 	type: ValueTypes["PaymentTokenType"] | Variable<any, string>
 };
+	/** Represents a resource that you can track the origin of the search traffic. */
+["Trackable"]:AliasType<{
+		/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`;
+		['...on Article']?: Omit<ValueTypes["Article"],keyof ValueTypes["Trackable"]>;
+		['...on Collection']?: Omit<ValueTypes["Collection"],keyof ValueTypes["Trackable"]>;
+		['...on Page']?: Omit<ValueTypes["Page"],keyof ValueTypes["Trackable"]>;
+		['...on Product']?: Omit<ValueTypes["Product"],keyof ValueTypes["Trackable"]>;
+		['...on SearchQuerySuggestion']?: Omit<ValueTypes["SearchQuerySuggestion"],keyof ValueTypes["Trackable"]>;
+		__typename?: boolean | `@${string}`
+}>;
 	/** An object representing exchange of money for a product or service. */
 ["Transaction"]: AliasType<{
 	/** The amount of money that the transaction was for. */
@@ -4532,8 +5532,8 @@ a tokenized payment.
 	/** Represents an [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986) and
 [RFC 3987](https://datatracker.ietf.org/doc/html/rfc3987)-compliant URI string.
 
-For example, `"https://johns-apparel.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
-(`johns-apparel.myshopify.com`).
+For example, `"https://example.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
+(`example.myshopify.com`).
  */
 ["URL"]:unknown;
 	/** The measurement used to calculate a unit price for a product variant (e.g. $9.99 / 100ml).
@@ -4600,7 +5600,7 @@ Example value: `"50"`.
 	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A filter used to view a subset of products in a collection matching a specific variant option. */
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific variant option. */
 ["VariantOptionFilter"]: {
 	/** The name of the variant option to filter on. */
 	name: string | Variable<any, string>,
@@ -4611,10 +5611,12 @@ Example value: `"50"`.
 ["Video"]: AliasType<{
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ValueTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ValueTypes["Image"],
 	/** The sources for a video. */
@@ -4640,7 +5642,12 @@ Example value: `"50"`.
   }
 
 export type ResolverInputTypes = {
-    /** A version of the API, as defined by [Shopify API versioning](https://shopify.dev/api/usage/versioning).
+    ["schema"]: AliasType<{
+	query?:ResolverInputTypes["QueryRoot"],
+	mutation?:ResolverInputTypes["Mutation"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** A version of the API, as defined by [Shopify API versioning](https://shopify.dev/api/usage/versioning).
 Versions are commonly referred to by their handle (for example, `2021-10`).
  */
 ["ApiVersion"]: AliasType<{
@@ -4652,6 +5659,34 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	supported?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for submitting Apple Pay payment method information for checkout.
+ */
+["ApplePayWalletContentInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ResolverInputTypes["MailingAddressInput"],
+	/** The data for the Apple Pay wallet. */
+	data: string,
+	/** The header data for the Apple Pay wallet. */
+	header: ResolverInputTypes["ApplePayWalletHeaderInput"],
+	/** The last digits of the card used to create the payment. */
+	lastDigits?: string | undefined | null,
+	/** The signature for the Apple Pay wallet. */
+	signature: string,
+	/** The version for the Apple Pay wallet. */
+	version: string
+};
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["ApplePayWalletHeaderInput"]: {
+	/** The application data for the Apple Pay wallet. */
+	applicationData?: string | undefined | null,
+	/** The ephemeral public key for the Apple Pay wallet. */
+	ephemeralPublicKey: string,
+	/** The public key hash for the Apple Pay wallet. */
+	publicKeyHash: string,
+	/** The transaction ID for the Apple Pay wallet. */
+	transactionId: string
+};
 	/** Details about the gift card used on the checkout. */
 ["AppliedGiftCard"]: AliasType<{
 	/** The amount that was taken from the gift card by applying it. */
@@ -4662,7 +5697,7 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	balance?:ResolverInputTypes["MoneyV2"],
 	/** The amount left on the gift card. */
 	balanceV2?:ResolverInputTypes["MoneyV2"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The last characters of the gift card. */
 	lastCharacters?:boolean | `@${string}`,
@@ -4684,25 +5719,26 @@ comments?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null},ResolverInputTypes["CommentConnection"]],
-content?: [{	/** Truncates string after the given length. */
+content?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null},boolean | `@${string}`],
 	/** The content of the article, complete with HTML formatting. */
 	contentHtml?:boolean | `@${string}`,
-excerpt?: [{	/** Truncates string after the given length. */
+excerpt?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null},boolean | `@${string}`],
 	/** The excerpt of the article, complete with HTML formatting. */
 	excerptHtml?:boolean | `@${string}`,
-	/** A human-friendly unique string for the Article automatically generated from its title.
- */
+	/** A human-friendly unique string for the Article automatically generated from its title. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The image associated with the article. */
 	image?:ResolverInputTypes["Image"],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -4710,10 +5746,13 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	publishedAt?:boolean | `@${string}`,
 	/** The article’s SEO information. */
 	seo?:ResolverInputTypes["SEO"],
-	/** A categorization that a article can be tagged with. */
+	/** A categorization that a article can be tagged with.
+ */
 	tags?:boolean | `@${string}`,
 	/** The article’s name. */
 	title?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** The author of an article. */
@@ -4752,15 +5791,17 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 }>;
 	/** The set of valid sort keys for the Article query. */
 ["ArticleSortKeys"]:ArticleSortKeys;
-	/** Represents a generic custom attribute. */
+	/** Represents a generic custom attribute, such as whether an order is a customer's first. */
 ["Attribute"]: AliasType<{
-	/** Key or name of the attribute. */
+	/** The key or name of the attribute. For example, `"customersFirstOrder"`.
+ */
 	key?:boolean | `@${string}`,
-	/** Value of the attribute. */
+	/** The value of the attribute. For example, `"true"`.
+ */
 	value?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required for an attribute. */
+	/** The input fields for an attribute. */
 ["AttributeInput"]: {
 	/** Key or name of the attribute. */
 	key: string,
@@ -4793,6 +5834,50 @@ This field should be polled until its value becomes `true`.
 	shippingRates?:ResolverInputTypes["ShippingRate"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Represents a cart line common fields. */
+["BaseCartLine"]:AliasType<{
+	attribute?: [{	/** The key of the attribute. */
+	key: string},ResolverInputTypes["Attribute"]],
+	/** The attributes associated with the cart line. Attributes are represented as key-value pairs. */
+	attributes?:ResolverInputTypes["Attribute"],
+	/** The cost of the merchandise that the buyer will pay for at checkout. The costs are subject to change and changes will be reflected at checkout. */
+	cost?:ResolverInputTypes["CartLineCost"],
+	/** The discounts that have been applied to the cart line. */
+	discountAllocations?:ResolverInputTypes["CartDiscountAllocation"],
+	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
+	estimatedCost?:ResolverInputTypes["CartLineEstimatedCost"],
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The merchandise that the buyer intends to purchase. */
+	merchandise?:ResolverInputTypes["Merchandise"],
+	/** The quantity of the merchandise that the customer intends to purchase. */
+	quantity?:boolean | `@${string}`,
+	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
+	sellingPlanAllocation?:ResolverInputTypes["SellingPlanAllocation"];
+		['...on CartLine']?: Omit<ResolverInputTypes["CartLine"],keyof ResolverInputTypes["BaseCartLine"]>;
+		['...on ComponentizableCartLine']?: Omit<ResolverInputTypes["ComponentizableCartLine"],keyof ResolverInputTypes["BaseCartLine"]>;
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type for paginating through multiple BaseCartLines.
+ */
+["BaseCartLineConnection"]: AliasType<{
+	/** A list of edges. */
+	edges?:ResolverInputTypes["BaseCartLineEdge"],
+	/** A list of the nodes contained in BaseCartLineEdge. */
+	nodes?:ResolverInputTypes["BaseCartLine"],
+	/** Information to aid in pagination. */
+	pageInfo?:ResolverInputTypes["PageInfo"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type which holds one BaseCartLine and a cursor during pagination.
+ */
+["BaseCartLineEdge"]: AliasType<{
+	/** A cursor for use in pagination. */
+	cursor?:boolean | `@${string}`,
+	/** The item at the end of BaseCartLineEdge. */
+	node?:ResolverInputTypes["BaseCartLine"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** An online store blog. */
 ["Blog"]: AliasType<{
 articleByHandle?: [{	/** The handle of the article. */
@@ -4803,16 +5888,16 @@ articles?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["ArticleSortKeys"] | undefined | null,	/** Supported filter parameters:
- - `author`
- - `blog_title`
- - `created_at`
- - `tag`
- - `tag_not`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ResolverInputTypes["ArticleSortKeys"] | undefined | null,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| author |
+| blog_title |
+| created_at |
+| tag |
+| tag_not |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null},ResolverInputTypes["ArticleConnection"]],
 	/** The authors who have contributed to the blog. */
@@ -4820,12 +5905,14 @@ for more information about using filters.
 	/** A human-friendly unique string for the Blog automatically generated from its title.
  */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -4857,7 +5944,7 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 }>;
 	/** The set of valid sort keys for the Blog query. */
 ["BlogSortKeys"]:BlogSortKeys;
-	/** The store's branding configuration.
+	/** The store's [branding configuration](https://help.shopify.com/en/manual/promoting-marketing/managing-brand-assets).
  */
 ["Brand"]: AliasType<{
 	/** The colors of the store's brand. */
@@ -4892,6 +5979,14 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	secondary?:ResolverInputTypes["BrandColorGroup"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for obtaining the buyer's identity.
+ */
+["BuyerInput"]: {
+	/** The customer access token retrieved from the [Customer Accounts API](https://shopify.dev/docs/api/customer#step-obtain-access-token). */
+	customerAccessToken: string,
+	/** The identifier of the company location. */
+	companyLocationId?: string | undefined | null
+};
 	/** Card brand, such as Visa or Mastercard, which can be used for payments. */
 ["CardBrand"]:CardBrand;
 	/** A cart represents the merchandise that a buyer intends to purchase,
@@ -4904,7 +5999,7 @@ attribute?: [{	/** The key of the attribute. */
 	key: string},ResolverInputTypes["Attribute"]],
 	/** The attributes associated with the cart. Attributes are represented as key-value pairs. */
 	attributes?:ResolverInputTypes["Attribute"],
-	/** Information about the buyer that is interacting with the cart. */
+	/** Information about the buyer that's interacting with the cart. */
 	buyerIdentity?:ResolverInputTypes["CartBuyerIdentity"],
 	/** The URL of the checkout for the cart. */
 	checkoutUrl?:boolean | `@${string}`,
@@ -4920,24 +6015,26 @@ deliveryGroups?: [{	/** Returns up to the first `n` elements from the list. */
 	reverse?: boolean | undefined | null},ResolverInputTypes["CartDeliveryGroupConnection"]],
 	/** The discounts that have been applied to the entire cart. */
 	discountAllocations?:ResolverInputTypes["CartDiscountAllocation"],
-	/** The case-insensitive discount codes that the customer added at checkout.
- */
+	/** The case-insensitive discount codes that the customer added at checkout. */
 	discountCodes?:ResolverInputTypes["CartDiscountCode"],
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated costs are subject to change and changes will be reflected at checkout.
-The `estimatedCost` field uses the `buyerIdentity` field to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated costs are subject to change and changes will be reflected at checkout. The `estimatedCost` field uses the `buyerIdentity` field to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 	estimatedCost?:ResolverInputTypes["CartEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 lines?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null},ResolverInputTypes["CartLineConnection"]],
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	reverse?: boolean | undefined | null},ResolverInputTypes["BaseCartLineConnection"]],
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
+	key: string},ResolverInputTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer. */
 	note?:boolean | `@${string}`,
 	/** The total number of items in the cart. */
 	totalQuantity?:boolean | `@${string}`,
@@ -4970,12 +6067,28 @@ lines?: [{	/** Returns up to the first `n` elements from the list. */
 	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
 The rank of the preferences is determined by the order of the addresses in the array. Preferences
 can be used to populate relevant fields in the checkout flow.
+
+As of the `2025-01` release, `buyerIdentity.deliveryAddressPreferences` is deprecated.
+Delivery addresses are now part of the `CartDelivery` object and managed with three new mutations:
+- `cartDeliveryAddressAdd`
+- `cartDeliveryAddressUpdate`
+- `cartDeliveryAddressDelete`
  */
 	deliveryAddressPreferences?:ResolverInputTypes["DeliveryAddress"],
-	/** The email address of the buyer that is interacting with the cart. */
+	/** The email address of the buyer that's interacting with the cart. */
 	email?:boolean | `@${string}`,
-	/** The phone number of the buyer that is interacting with the cart. */
+	/** The phone number of the buyer that's interacting with the cart. */
 	phone?:boolean | `@${string}`,
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
+ */
+	preferences?:ResolverInputTypes["CartPreferences"],
+	/** The purchasing company associated with the cart. */
+	purchasingCompany?:ResolverInputTypes["PurchasingCompany"],
+	/** A set of wallet preferences tied to the buyer that is interacting with the cart.
+Preferences can be used to populate relevant payment fields in the checkout flow.
+ */
+	walletPreferences?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** Specifies the input fields to update the buyer information associated with a cart.
@@ -4988,15 +6101,16 @@ and should match the customer's shipping address.
 	email?: string | undefined | null,
 	/** The phone number of the buyer that is interacting with the cart. */
 	phone?: string | undefined | null,
+	/** The company location of the buyer that is interacting with the cart. */
+	companyLocationId?: string | undefined | null,
 	/** The country where the buyer is located. */
 	countryCode?: ResolverInputTypes["CountryCode"] | undefined | null,
 	/** The access token used to identify the customer associated with the cart. */
 	customerAccessToken?: string | undefined | null,
-	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
-The rank of the preferences is determined by the order of the addresses in the array. Preferences
-can be used to populate relevant fields in the checkout flow.
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
  */
-	deliveryAddressPreferences?: Array<ResolverInputTypes["DeliveryAddressInput"]> | undefined | null
+	preferences?: ResolverInputTypes["CartPreferencesInput"] | undefined | null
 };
 	/** Return type for `cartBuyerIdentityUpdate` mutation. */
 ["CartBuyerIdentityUpdatePayload"]: AliasType<{
@@ -5006,12 +6120,64 @@ can be used to populate relevant fields in the checkout flow.
 	userErrors?:ResolverInputTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Represents how credit card details are provided for a direct payment.
+ */
+["CartCardSource"]:CartCardSource;
 	/** The discount that has been applied to the cart line using a discount code. */
 ["CartCodeDiscountAllocation"]: AliasType<{
 	/** The code used to apply the discount. */
 	code?:boolean | `@${string}`,
 	/** The discounted amount that has been applied to the cart line. */
 	discountedAmount?:ResolverInputTypes["MoneyV2"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The completion action to checkout a cart. */
+["CartCompletionAction"]: AliasType<{
+	CompletePaymentChallenge?:ResolverInputTypes["CompletePaymentChallenge"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The required completion action to checkout a cart. */
+["CartCompletionActionRequired"]: AliasType<{
+	/** The action required to complete the cart completion attempt. */
+	action?:ResolverInputTypes["CartCompletionAction"],
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The result of a cart completion attempt. */
+["CartCompletionAttemptResult"]: AliasType<{
+	CartCompletionActionRequired?:ResolverInputTypes["CartCompletionActionRequired"],
+	CartCompletionFailed?:ResolverInputTypes["CartCompletionFailed"],
+	CartCompletionProcessing?:ResolverInputTypes["CartCompletionProcessing"],
+	CartCompletionSuccess?:ResolverInputTypes["CartCompletionSuccess"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** A failed completion to checkout a cart. */
+["CartCompletionFailed"]: AliasType<{
+	/** The errors that caused the checkout to fail. */
+	errors?:ResolverInputTypes["CompletionError"],
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A cart checkout completion that's still processing. */
+["CartCompletionProcessing"]: AliasType<{
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+	/** The number of milliseconds to wait before polling again. */
+	pollDelay?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A successful completion to checkout a cart and a created order. */
+["CartCompletionSuccess"]: AliasType<{
+	/** The date and time when the job completed. */
+	completedAt?:boolean | `@${string}`,
+	/** The ID of the cart completion attempt. */
+	id?:boolean | `@${string}`,
+	/** The ID of the order that's created in Shopify. */
+	orderId?:boolean | `@${string}`,
+	/** The URL of the order confirmation in Shopify. */
+	orderUrl?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** The costs that the buyer will pay at checkout.
@@ -5055,6 +6221,31 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	title?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreference"]: AliasType<{
+	/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode?:boolean | `@${string}`,
+	/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude?:boolean | `@${string}`,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreferenceInput"]: {
+	/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude: number,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude: number,
+	/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode: ResolverInputTypes["CountryCode"]
+};
 	/** Information about the options available for one or more line items to be delivered to a specific address. */
 ["CartDeliveryGroup"]: AliasType<{
 cartLines?: [{	/** Returns up to the first `n` elements from the list. */
@@ -5062,11 +6253,13 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null},ResolverInputTypes["CartLineConnection"]],
+	reverse?: boolean | undefined | null},ResolverInputTypes["BaseCartLineConnection"]],
 	/** The destination address for the delivery group. */
 	deliveryAddress?:ResolverInputTypes["MailingAddress"],
 	/** The delivery options available for the delivery group. */
 	deliveryOptions?:ResolverInputTypes["CartDeliveryOption"],
+	/** The type of merchandise in the delivery group. */
+	groupType?:boolean | `@${string}`,
 	/** The ID for the delivery group. */
 	id?:boolean | `@${string}`,
 	/** The selected delivery option for the delivery group. */
@@ -5093,6 +6286,9 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 	node?:ResolverInputTypes["CartDeliveryGroup"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Defines what type of merchandise is in the delivery group.
+ */
+["CartDeliveryGroupType"]:CartDeliveryGroupType;
 	/** Information about a delivery option. */
 ["CartDeliveryOption"]: AliasType<{
 	/** The code of the delivery option. */
@@ -5109,6 +6305,44 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 	title?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartDeliveryPreference"]: AliasType<{
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+	coordinates?:ResolverInputTypes["CartDeliveryCoordinatesPreference"],
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+	deliveryMethod?:boolean | `@${string}`,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+ */
+	pickupHandle?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Delivery preferences can be used to prefill the delivery section at checkout. */
+["CartDeliveryPreferenceInput"]: {
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points.
+
+The input must not contain more than `250` values. */
+	deliveryMethod?: Array<ResolverInputTypes["PreferenceDeliveryMethodType"]> | undefined | null,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+
+The input must not contain more than `250` values. */
+	pickupHandle?: Array<string> | undefined | null,
+	/** The coordinates of a delivery location in order of preference. */
+	coordinates?: ResolverInputTypes["CartDeliveryCoordinatesPreferenceInput"] | undefined | null
+};
+	/** The input fields for submitting direct payment method information for checkout.
+ */
+["CartDirectPaymentMethodInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ResolverInputTypes["MailingAddressInput"],
+	/** The session ID for the direct payment method used to create the payment. */
+	sessionId: string,
+	/** The source of the credit card payment. */
+	cardSource?: ResolverInputTypes["CartCardSource"] | undefined | null
+};
 	/** The discounts that have been applied to the cart line. */
 ["CartDiscountAllocation"]:AliasType<{
 		/** The discounted amount that has been applied to the cart line. */
@@ -5136,12 +6370,7 @@ cartLines?: [{	/** Returns up to the first `n` elements from the list. */
 }>;
 	/** Possible error codes that can be returned by `CartUserError`. */
 ["CartErrorCode"]:CartErrorCode;
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated cost uses
-[`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity)
-to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity) to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 ["CartEstimatedCost"]: AliasType<{
 	/** The estimated amount, before taxes and discounts, for the customer to pay at checkout. The checkout charge amount doesn't include any deferred payments that'll be paid at a later date. If the cart has no deferred payments, then the checkout charge amount is equivalent to`subtotal_amount`. */
 	checkoutChargeAmount?:ResolverInputTypes["MoneyV2"],
@@ -5155,22 +6384,50 @@ to determine
 	totalTaxAmount?:ResolverInputTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields to create a cart. */
+	/** The input fields for submitting a billing address without a selected payment method.
+ */
+["CartFreePaymentMethodInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ResolverInputTypes["MailingAddressInput"]
+};
+	/** The input fields to create a cart. */
 ["CartInput"]: {
-	/** An array of key-value pairs that contains additional information about the cart. */
+	/** An array of key-value pairs that contains additional information about the cart.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ResolverInputTypes["AttributeInput"]> | undefined | null,
-	/** A list of merchandise lines to add to the cart. */
+	/** A list of merchandise lines to add to the cart.
+
+The input must not contain more than `250` values. */
 	lines?: Array<ResolverInputTypes["CartLineInput"]> | undefined | null,
 	/** The case-insensitive discount codes that the customer added at checkout.
- */
+
+The input must not contain more than `250` values. */
 	discountCodes?: Array<string> | undefined | null,
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer.
+ */
 	note?: string | undefined | null,
 	/** The customer associated with the cart. Used to determine [international pricing]
 (https://shopify.dev/custom-storefronts/internationalization/international-pricing).
 Buyer identity should match the customer's shipping address.
  */
-	buyerIdentity?: ResolverInputTypes["CartBuyerIdentityInput"] | undefined | null
+	buyerIdentity?: ResolverInputTypes["CartBuyerIdentityInput"] | undefined | null,
+	/** The metafields to associate with this cart.
+
+The input must not contain more than `250` values. */
+	metafields?: Array<ResolverInputTypes["CartInputMetafieldInput"]> | undefined | null
+};
+	/** The input fields for a cart metafield value to set. */
+["CartInputMetafieldInput"]: {
+	/** The key name of the metafield. */
+	key: string,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string
 };
 	/** Represents information about the merchandise in the cart. */
 ["CartLine"]: AliasType<{
@@ -5184,7 +6441,7 @@ attribute?: [{	/** The key of the attribute. */
 	discountAllocations?:ResolverInputTypes["CartDiscountAllocation"],
 	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
 	estimatedCost?:ResolverInputTypes["CartLineEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The merchandise that the buyer intends to purchase. */
 	merchandise?:ResolverInputTypes["Merchandise"],
@@ -5192,17 +6449,6 @@ attribute?: [{	/** The key of the attribute. */
 	quantity?:boolean | `@${string}`,
 	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
 	sellingPlanAllocation?:ResolverInputTypes["SellingPlanAllocation"],
-		__typename?: boolean | `@${string}`
-}>;
-	/** An auto-generated type for paginating through multiple CartLines.
- */
-["CartLineConnection"]: AliasType<{
-	/** A list of edges. */
-	edges?:ResolverInputTypes["CartLineEdge"],
-	/** A list of the nodes contained in CartLineEdge. */
-	nodes?:ResolverInputTypes["CartLine"],
-	/** Information to aid in pagination. */
-	pageInfo?:ResolverInputTypes["PageInfo"],
 		__typename?: boolean | `@${string}`
 }>;
 	/** The cost of the merchandise line that the buyer will pay at checkout. */
@@ -5217,16 +6463,8 @@ attribute?: [{	/** The key of the attribute. */
 	totalAmount?:ResolverInputTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** An auto-generated type which holds one CartLine and a cursor during pagination.
+	/** The estimated cost of the merchandise line that the buyer will pay at checkout.
  */
-["CartLineEdge"]: AliasType<{
-	/** A cursor for use in pagination. */
-	cursor?:boolean | `@${string}`,
-	/** The item at the end of CartLineEdge. */
-	node?:ResolverInputTypes["CartLine"],
-		__typename?: boolean | `@${string}`
-}>;
-	/** The estimated cost of the merchandise line that the buyer will pay at checkout. */
 ["CartLineEstimatedCost"]: AliasType<{
 	/** The amount of the merchandise line. */
 	amount?:ResolverInputTypes["MoneyV2"],
@@ -5238,28 +6476,32 @@ attribute?: [{	/** The key of the attribute. */
 	totalAmount?:ResolverInputTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields to create a merchandise line on a cart. */
+	/** The input fields to create a merchandise line on a cart. */
 ["CartLineInput"]: {
-	/** An array of key-value pairs that contains additional information about the merchandise line. */
+	/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ResolverInputTypes["AttributeInput"]> | undefined | null,
 	/** The quantity of the merchandise. */
 	quantity?: number | undefined | null,
-	/** The identifier of the merchandise that the buyer intends to purchase. */
+	/** The ID of the merchandise that the buyer intends to purchase. */
 	merchandiseId: string,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined | null
 };
-	/** Specifies the input fields to update a line item on a cart. */
+	/** The input fields to update a line item on a cart. */
 ["CartLineUpdateInput"]: {
-	/** The identifier of the merchandise line. */
+	/** The ID of the merchandise line. */
 	id: string,
 	/** The quantity of the line item. */
 	quantity?: number | undefined | null,
-	/** The identifier of the merchandise for the line item. */
+	/** The ID of the merchandise for the line item. */
 	merchandiseId?: string | undefined | null,
-	/** An array of key-value pairs that contains additional information about the merchandise line. */
+	/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ResolverInputTypes["AttributeInput"]> | undefined | null,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined | null
 };
 	/** Return type for `cartLinesAdd` mutation. */
@@ -5286,6 +6528,45 @@ attribute?: [{	/** The key of the attribute. */
 	userErrors?:ResolverInputTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields to delete a cart metafield. */
+["CartMetafieldDeleteInput"]: {
+	/** The ID of the cart resource. */
+	ownerId: string,
+	/** The key name of the cart metafield. Can either be a composite key (`namespace.key`) or a simple key
+ that relies on the default app-reserved namespace.
+ */
+	key: string
+};
+	/** Return type for `cartMetafieldDelete` mutation. */
+["CartMetafieldDeletePayload"]: AliasType<{
+	/** The ID of the deleted cart metafield. */
+	deletedId?:boolean | `@${string}`,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ResolverInputTypes["MetafieldDeleteUserError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The input fields for a cart metafield value to set. */
+["CartMetafieldsSetInput"]: {
+	/** The ID of the cart resource. */
+	ownerId: string,
+	/** The key name of the cart metafield. */
+	key: string,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string
+};
+	/** Return type for `cartMetafieldsSet` mutation. */
+["CartMetafieldsSetPayload"]: AliasType<{
+	/** The list of cart metafields that were set. */
+	metafields?:ResolverInputTypes["Metafield"],
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ResolverInputTypes["MetafieldsSetUserError"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Return type for `cartNoteUpdate` mutation. */
 ["CartNoteUpdatePayload"]: AliasType<{
 	/** The updated cart. */
@@ -5294,6 +6575,56 @@ attribute?: [{	/** The key of the attribute. */
 	userErrors?:ResolverInputTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for updating the payment method that will be used to checkout.
+ */
+["CartPaymentInput"]: {
+	/** The amount that the customer will be charged at checkout. */
+	amount: ResolverInputTypes["MoneyInput"],
+	/** An ID of the order placed on the originating platform.
+Note that this value doesn't correspond to the Shopify Order ID.
+ */
+	sourceIdentifier?: string | undefined | null,
+	/** The input fields to use to checkout a cart without providing a payment method.
+Use this payment method input if the total cost of the cart is 0.
+ */
+	freePaymentMethod?: ResolverInputTypes["CartFreePaymentMethodInput"] | undefined | null,
+	/** The input fields to use when checking out a cart with a direct payment method (like a credit card).
+ */
+	directPaymentMethod?: ResolverInputTypes["CartDirectPaymentMethodInput"] | undefined | null,
+	/** The input fields to use when checking out a cart with a wallet payment method (like Shop Pay or Apple Pay).
+ */
+	walletPaymentMethod?: ResolverInputTypes["CartWalletPaymentMethodInput"] | undefined | null
+};
+	/** Return type for `cartPaymentUpdate` mutation. */
+["CartPaymentUpdatePayload"]: AliasType<{
+	/** The updated cart. */
+	cart?:ResolverInputTypes["Cart"],
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ResolverInputTypes["CartUserError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartPreferences"]: AliasType<{
+	/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?:ResolverInputTypes["CartDeliveryPreference"],
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+ */
+	wallet?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The input fields represent preferences for the buyer that is interacting with the cart. */
+["CartPreferencesInput"]: {
+	/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?: ResolverInputTypes["CartDeliveryPreferenceInput"] | undefined | null,
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+
+The input must not contain more than `250` values. */
+	wallet?: Array<string> | undefined | null
+};
 	/** The input fields for updating the selected delivery options for a delivery group.
  */
 ["CartSelectedDeliveryOptionInput"]: {
@@ -5310,6 +6641,22 @@ attribute?: [{	/** The key of the attribute. */
 	userErrors?:ResolverInputTypes["CartUserError"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Return type for `cartSubmitForCompletion` mutation. */
+["CartSubmitForCompletionPayload"]: AliasType<{
+	/** The result of cart submission for completion. */
+	result?:ResolverInputTypes["CartSubmitForCompletionResult"],
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors?:ResolverInputTypes["CartUserError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The result of cart submit completion. */
+["CartSubmitForCompletionResult"]: AliasType<{
+	SubmitAlreadyAccepted?:ResolverInputTypes["SubmitAlreadyAccepted"],
+	SubmitFailed?:ResolverInputTypes["SubmitFailed"],
+	SubmitSuccess?:ResolverInputTypes["SubmitSuccess"],
+	SubmitThrottled?:ResolverInputTypes["SubmitThrottled"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Represents an error that happens during execution of a cart mutation. */
 ["CartUserError"]: AliasType<{
 	/** The error code. */
@@ -5320,7 +6667,18 @@ attribute?: [{	/** The key of the attribute. */
 	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A container for all the information required to checkout items and pay. */
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["CartWalletPaymentMethodInput"]: {
+	/** The payment method information for the Apple Pay wallet. */
+	applePayWalletContent?: ResolverInputTypes["ApplePayWalletContentInput"] | undefined | null,
+	/** The payment method information for the Shop Pay wallet. */
+	shopPayWalletContent?: ResolverInputTypes["ShopPayWalletContentInput"] | undefined | null
+};
+	/** A container for all the information required to checkout items and pay.
+
+The Storefront GraphQL Checkout API is deprecated and will be removed in a future version. Please see https://shopify.dev/changelog/deprecation-of-checkout-apis for more information.
+ */
 ["Checkout"]: AliasType<{
 	/** The gift cards used on the checkout. */
 	appliedGiftCards?:ResolverInputTypes["AppliedGiftCard"],
@@ -5337,7 +6695,7 @@ the shipping address is valid.
 	createdAt?:boolean | `@${string}`,
 	/** The currency code for the checkout. */
 	currencyCode?:boolean | `@${string}`,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout. */
 	customAttributes?:ResolverInputTypes["Attribute"],
 discountApplications?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
@@ -5347,7 +6705,7 @@ discountApplications?: [{	/** Returns up to the first `n` elements from the list
 	reverse?: boolean | undefined | null},ResolverInputTypes["DiscountApplicationConnection"]],
 	/** The email attached to this checkout. */
 	email?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
@@ -5361,7 +6719,7 @@ lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	note?:boolean | `@${string}`,
 	/** The resulting order from a paid checkout. */
 	order?:ResolverInputTypes["Order"],
-	/** The Order Status Page for this Checkout, null when checkout is not completed. */
+	/** The <b>Order status</b> page for this Checkout, null when checkout isn't completed. */
 	orderStatusUrl?:boolean | `@${string}`,
 	/** The amount left to be paid. This is equal to the cost of the line items, taxes, and shipping, minus discounts and gift cards. */
 	paymentDue?:ResolverInputTypes["MoneyV2"],
@@ -5380,7 +6738,7 @@ date, polling is required until the value is true.
 	/** The discounts that have been allocated onto the shipping line by discount applications.
  */
 	shippingDiscountAllocations?:ResolverInputTypes["DiscountAllocation"],
-	/** Once a shipping rate is selected by the customer it is transitioned to a `shipping_line` object. */
+	/** Once a shipping rate is selected by the customer it's transitioned to a `shipping_line` object. */
 	shippingLine?:ResolverInputTypes["ShippingRate"],
 	/** The price at checkout before shipping and taxes. */
 	subtotalPrice?:ResolverInputTypes["MoneyV2"],
@@ -5406,11 +6764,13 @@ date, polling is required until the value is true.
 	webUrl?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to update a checkout's attributes. */
+	/** The input fields required to update a checkout's attributes. */
 ["CheckoutAttributesUpdateV2Input"]: {
 	/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined | null,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ResolverInputTypes["AttributeInput"]> | undefined | null,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -5435,7 +6795,7 @@ each operation.
 	countryCode?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the identity of the customer associated with the checkout. */
+	/** The input fields for the identity of the customer associated with the checkout. */
 ["CheckoutBuyerIdentityInput"]: {
 	/** The country code of one of the shop's
 [enabled countries](https://help.shopify.com/en/manual/payments/shopify-payments/multi-currency/setup).
@@ -5477,17 +6837,21 @@ For example, `CA`. Including this field creates a checkout in the specified coun
 	userErrors?:ResolverInputTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to create a checkout. */
+	/** The input fields required to create a checkout. */
 ["CheckoutCreateInput"]: {
 	/** The email with which the customer wants to checkout. */
 	email?: string | undefined | null,
-	/** A list of line item objects, each one containing information about an item in the checkout. */
+	/** A list of line item objects, each one containing information about an item in the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems?: Array<ResolverInputTypes["CheckoutLineItemInput"]> | undefined | null,
 	/** The shipping address to where the line items will be shipped. */
 	shippingAddress?: ResolverInputTypes["MailingAddressInput"] | undefined | null,
 	/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined | null,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ResolverInputTypes["AttributeInput"]> | undefined | null,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -5589,7 +6953,7 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	customAttributes?:ResolverInputTypes["Attribute"],
 	/** The discounts that have been allocated onto the checkout line item by discount applications. */
 	discountAllocations?:ResolverInputTypes["DiscountAllocation"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The quantity of the line item. */
 	quantity?:boolean | `@${string}`,
@@ -5621,24 +6985,28 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	node?:ResolverInputTypes["CheckoutLineItem"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields to create a line item on a checkout. */
+	/** The input fields to create a line item on a checkout. */
 ["CheckoutLineItemInput"]: {
-	/** Extra information in the form of an array of Key-Value pairs about the line item. */
+	/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ResolverInputTypes["AttributeInput"]> | undefined | null,
 	/** The quantity of the line item. */
 	quantity: number,
-	/** The identifier of the product variant for the line item. */
+	/** The ID of the product variant for the line item. */
 	variantId: string
 };
-	/** Specifies the input fields to update a line item on the checkout. */
+	/** The input fields to update a line item on the checkout. */
 ["CheckoutLineItemUpdateInput"]: {
-	/** The identifier of the line item. */
+	/** The ID of the line item. */
 	id?: string | undefined | null,
-	/** The variant identifier of the line item. */
+	/** The variant ID of the line item. */
 	variantId?: string | undefined | null,
 	/** The quantity of the line item. */
 	quantity?: number | undefined | null,
-	/** Extra information in the form of an array of Key-Value pairs about the line item. */
+	/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ResolverInputTypes["AttributeInput"]> | undefined | null
 };
 	/** Return type for `checkoutLineItemsAdd` mutation. */
@@ -5709,9 +7077,11 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A collection represents a grouping of products that a shop owner can create to organize them or make their shops easier to browse. */
+	/** A collection represents a grouping of products that a shop owner can create to
+organize them or make their shops easier to browse.
+ */
 ["Collection"]: AliasType<{
-description?: [{	/** Truncates string after the given length. */
+description?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null},boolean | `@${string}`],
 	/** The description of the collection, complete with HTML formatting. */
 	descriptionHtml?:boolean | `@${string}`,
@@ -5719,14 +7089,16 @@ description?: [{	/** Truncates string after the given length. */
 Limit of 255 characters.
  */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** Image associated with the collection. */
 	image?:ResolverInputTypes["Image"],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -5736,12 +7108,16 @@ products?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["ProductCollectionSortKeys"] | undefined | null,	/** Returns a subset of products matching all product filters. */
+	sortKey?: ResolverInputTypes["ProductCollectionSortKeys"] | undefined | null,	/** Returns a subset of products matching all product filters.
+
+The input must not contain more than `250` values. */
 	filters?: Array<ResolverInputTypes["ProductFilter"]> | undefined | null},ResolverInputTypes["ProductConnection"]],
 	/** The collection's SEO information. */
 	seo?:ResolverInputTypes["SEO"],
 	/** The collection’s name. Limit of 255 characters. */
 	title?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 	/** The date and time when the collection was last modified. */
 	updatedAt?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
@@ -5755,6 +7131,8 @@ products?: [{	/** Returns up to the first `n` elements from the list. */
 	nodes?:ResolverInputTypes["Collection"],
 	/** Information to aid in pagination. */
 	pageInfo?:ResolverInputTypes["PageInfo"],
+	/** The total count of Collections. */
+	totalCount?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** An auto-generated type which holds one Collection and a cursor during pagination.
@@ -5777,11 +7155,11 @@ For example, "#6A8D48".
 ["Comment"]: AliasType<{
 	/** The comment’s author. */
 	author?:ResolverInputTypes["CommentAuthor"],
-content?: [{	/** Truncates string after the given length. */
+content?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null},boolean | `@${string}`],
 	/** The content of the comment, complete with HTML formatting. */
 	contentHtml?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
@@ -5813,6 +7191,104 @@ content?: [{	/** Truncates string after the given length. */
 	node?:ResolverInputTypes["Comment"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Represents information about a company which is also a customer of the shop. */
+["Company"]: AliasType<{
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was created in Shopify. */
+	createdAt?:boolean | `@${string}`,
+	/** A unique externally-supplied ID for the company. */
+	externalId?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
+	key: string},ResolverInputTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
+	/** The name of the company. */
+	name?:boolean | `@${string}`,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was last modified. */
+	updatedAt?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A company's main point of contact. */
+["CompanyContact"]: AliasType<{
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was created in Shopify. */
+	createdAt?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The company contact's locale (language). */
+	locale?:boolean | `@${string}`,
+	/** The company contact's job title. */
+	title?:boolean | `@${string}`,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was last modified. */
+	updatedAt?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A company's location. */
+["CompanyLocation"]: AliasType<{
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was created in Shopify. */
+	createdAt?:boolean | `@${string}`,
+	/** A unique externally-supplied ID for the company. */
+	externalId?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The preferred locale of the company location. */
+	locale?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
+	key: string},ResolverInputTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
+	/** The name of the company location. */
+	name?:boolean | `@${string}`,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was last modified. */
+	updatedAt?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The action for the 3DS payment redirect. */
+["CompletePaymentChallenge"]: AliasType<{
+	/** The URL for the 3DS payment redirect. */
+	redirectUrl?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** An error that occurred during a cart completion attempt. */
+["CompletionError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The code of the error that occurred during a cart completion attempt. */
+["CompletionErrorCode"]:CompletionErrorCode;
+	/** Represents information about the grouped merchandise in the cart. */
+["ComponentizableCartLine"]: AliasType<{
+attribute?: [{	/** The key of the attribute. */
+	key: string},ResolverInputTypes["Attribute"]],
+	/** The attributes associated with the cart line. Attributes are represented as key-value pairs. */
+	attributes?:ResolverInputTypes["Attribute"],
+	/** The cost of the merchandise that the buyer will pay for at checkout. The costs are subject to change and changes will be reflected at checkout. */
+	cost?:ResolverInputTypes["CartLineCost"],
+	/** The discounts that have been applied to the cart line. */
+	discountAllocations?:ResolverInputTypes["CartDiscountAllocation"],
+	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
+	estimatedCost?:ResolverInputTypes["CartLineEstimatedCost"],
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+	/** The components of the line item. */
+	lineComponents?:ResolverInputTypes["CartLine"],
+	/** The merchandise that the buyer intends to purchase. */
+	merchandise?:ResolverInputTypes["Merchandise"],
+	/** The quantity of the merchandise that the customer intends to purchase. */
+	quantity?:boolean | `@${string}`,
+	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
+	sellingPlanAllocation?:ResolverInputTypes["SellingPlanAllocation"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** A country. */
 ["Country"]: AliasType<{
 	/** The languages available for the country. */
@@ -5821,6 +7297,8 @@ content?: [{	/** Truncates string after the given length. */
 	currency?:ResolverInputTypes["Currency"],
 	/** The ISO code of the country. */
 	isoCode?:boolean | `@${string}`,
+	/** The market that includes this country. */
+	market?:ResolverInputTypes["Market"],
 	/** The name of the country. */
 	name?:boolean | `@${string}`,
 	/** The unit system used in the country. */
@@ -5880,7 +7358,8 @@ a Shopify vaulted credit card payment.
 	symbol?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** The three-letter currency codes that represent the world currencies used in stores. These include standard ISO 4217 codes, legacy codes,
+	/** The three-letter currency codes that represent the world currencies used in
+stores. These include standard ISO 4217 codes, legacy codes,
 and non-standard codes.
  */
 ["CurrencyCode"]:CurrencyCode;
@@ -5904,16 +7383,18 @@ addresses?: [{	/** Returns up to the first `n` elements from the list. */
 	email?:boolean | `@${string}`,
 	/** The customer’s first name. */
 	firstName?:boolean | `@${string}`,
-	/** A unique identifier for the customer. */
+	/** A unique ID for the customer. */
 	id?:boolean | `@${string}`,
 	/** The customer's most recently updated, incomplete checkout. */
 	lastIncompleteCheckout?:ResolverInputTypes["Checkout"],
 	/** The customer’s last name. */
 	lastName?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** The number of orders that the customer has made at the store in their lifetime. */
 	numberOfOrders?:boolean | `@${string}`,
@@ -5923,11 +7404,11 @@ orders?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["OrderSortKeys"] | undefined | null,	/** Supported filter parameters:
- - `processed_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ResolverInputTypes["OrderSortKeys"] | undefined | null,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| processed_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null},ResolverInputTypes["OrderConnection"]],
 	/** The customer’s phone number. */
@@ -5948,7 +7429,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	expiresAt?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required to create a customer access token. */
+	/** The input fields required to create a customer access token. */
 ["CustomerAccessTokenCreateInput"]: {
 	/** The email associated to the customer. */
 	email: string,
@@ -6001,7 +7482,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	customerUserErrors?:ResolverInputTypes["CustomerUserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required to activate a customer. */
+	/** The input fields to activate a customer. */
 ["CustomerActivateInput"]: {
 	/** The activation token required to activate the customer. */
 	activationToken: string,
@@ -6050,7 +7531,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	userErrors?:ResolverInputTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** The fields required to create a new customer. */
+	/** The input fields to create a new customer. */
 ["CustomerCreateInput"]: {
 	/** The customer’s first name. */
 	firstName?: string | undefined | null,
@@ -6110,7 +7591,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	userErrors?:ResolverInputTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to reset a customer’s password. */
+	/** The input fields to reset a customer's password. */
 ["CustomerResetInput"]: {
 	/** The reset token required to reset the customer’s password. */
 	resetToken: string,
@@ -6129,7 +7610,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	userErrors?:ResolverInputTypes["UserError"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields required to update the Customer information. */
+	/** The input fields to update the Customer information. */
 ["CustomerUpdateInput"]: {
 	/** The customer’s first name. */
 	firstName?: string | undefined | null,
@@ -6190,8 +7671,16 @@ Example values: `"29.99"`, `"29.999"`.
  */
 ["DeliveryAddressInput"]: {
 	/** A delivery address preference of a buyer that is interacting with the cart. */
-	deliveryAddress?: ResolverInputTypes["MailingAddressInput"] | undefined | null
+	deliveryAddress?: ResolverInputTypes["MailingAddressInput"] | undefined | null,
+	/** Defines what kind of address validation is requested. */
+	deliveryAddressValidationStrategy?: ResolverInputTypes["DeliveryAddressValidationStrategy"] | undefined | null,
+	/** The ID of a customer address that is associated with the buyer that is interacting with the cart.
+ */
+	customerAddressId?: string | undefined | null
 };
+	/** Defines the types of available validation strategies for delivery addresses.
+ */
+["DeliveryAddressValidationStrategy"]:DeliveryAddressValidationStrategy;
 	/** List of different delivery method types. */
 ["DeliveryMethodType"]:DeliveryMethodType;
 	/** Digital wallet, such as Apple Pay, which can be used for accelerated checkouts. */
@@ -6281,6 +7770,8 @@ the time that it is applied.
 		['...on CartUserError']?: Omit<ResolverInputTypes["CartUserError"],keyof ResolverInputTypes["DisplayableError"]>;
 		['...on CheckoutUserError']?: Omit<ResolverInputTypes["CheckoutUserError"],keyof ResolverInputTypes["DisplayableError"]>;
 		['...on CustomerUserError']?: Omit<ResolverInputTypes["CustomerUserError"],keyof ResolverInputTypes["DisplayableError"]>;
+		['...on MetafieldDeleteUserError']?: Omit<ResolverInputTypes["MetafieldDeleteUserError"],keyof ResolverInputTypes["DisplayableError"]>;
+		['...on MetafieldsSetUserError']?: Omit<ResolverInputTypes["MetafieldsSetUserError"],keyof ResolverInputTypes["DisplayableError"]>;
 		['...on UserError']?: Omit<ResolverInputTypes["UserError"],keyof ResolverInputTypes["DisplayableError"]>;
 		__typename?: boolean | `@${string}`
 }>;
@@ -6304,12 +7795,14 @@ the time that it is applied.
 	embeddedUrl?:boolean | `@${string}`,
 	/** The host of the external video. */
 	host?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
 	/** The origin URL of the video on the respective host. */
 	originUrl?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ResolverInputTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ResolverInputTypes["Image"],
 		__typename?: boolean | `@${string}`
@@ -6320,12 +7813,19 @@ the time that it is applied.
 	id?:boolean | `@${string}`,
 	/** A human-friendly string for this filter. */
 	label?:boolean | `@${string}`,
+	/** Describes how to present the filter values.
+Returns a value only for filters of type `LIST`. Returns null for other types.
+ */
+	presentation?:boolean | `@${string}`,
 	/** An enumeration that denotes the type of data this filter represents. */
 	type?:boolean | `@${string}`,
 	/** The list of values for this filter. */
 	values?:ResolverInputTypes["FilterValue"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Defines how to present the filter values, specifies the presentation of the filter.
+ */
+["FilterPresentation"]:FilterPresentation;
 	/** The type of data that the filter group represents.
 
 For more information, refer to [Filter products in a collection with the Storefront API]
@@ -6338,13 +7838,19 @@ For more information, refer to [Filter products in a collection with the Storefr
 	count?:boolean | `@${string}`,
 	/** A unique identifier. */
 	id?:boolean | `@${string}`,
+	/** The visual representation when the filter's presentation is `IMAGE`. */
+	image?:ResolverInputTypes["MediaImage"],
 	/** An input object that can be used to filter by this value on the parent field.
 
-The value is provided as a helper for building dynamic filtering UI. For example, if you have a list of selected `FilterValue` objects, you can combine their respective `input` values to use in a subsequent query.
+The value is provided as a helper for building dynamic filtering UI. For
+example, if you have a list of selected `FilterValue` objects, you can combine
+their respective `input` values to use in a subsequent query.
  */
 	input?:boolean | `@${string}`,
 	/** A human-friendly string for this filter value. */
 	label?:boolean | `@${string}`,
+	/** The visual representation when the filter's presentation is `SWATCH`. */
+	swatch?:ResolverInputTypes["Swatch"],
 		__typename?: boolean | `@${string}`
 }>;
 	/** Represents a single fulfillment in an order. */
@@ -6401,7 +7907,7 @@ trackingInfo?: [{	/** Truncate the array result to this size. */
 ["GenericFile"]: AliasType<{
 	/** A word or phrase to indicate the contents of a file. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The MIME type of the file. */
 	mimeType?:boolean | `@${string}`,
@@ -6413,7 +7919,7 @@ trackingInfo?: [{	/** Truncate the array result to this size. */
 	url?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Used to specify a geographical location. */
+	/** The input fields used to specify a geographical location. */
 ["GeoCoordinateInput"]: {
 	/** The coordinate's latitude value. */
 	latitude: number,
@@ -6428,15 +7934,22 @@ Example value: `"<p>Grey cotton knit sweater.</p>"`
 ["HTML"]:unknown;
 	/** Represents information about the metafields associated to the specified resource. */
 ["HasMetafields"]:AliasType<{
-	metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+	metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]];
 		['...on Article']?: Omit<ResolverInputTypes["Article"],keyof ResolverInputTypes["HasMetafields"]>;
 		['...on Blog']?: Omit<ResolverInputTypes["Blog"],keyof ResolverInputTypes["HasMetafields"]>;
+		['...on Cart']?: Omit<ResolverInputTypes["Cart"],keyof ResolverInputTypes["HasMetafields"]>;
 		['...on Collection']?: Omit<ResolverInputTypes["Collection"],keyof ResolverInputTypes["HasMetafields"]>;
+		['...on Company']?: Omit<ResolverInputTypes["Company"],keyof ResolverInputTypes["HasMetafields"]>;
+		['...on CompanyLocation']?: Omit<ResolverInputTypes["CompanyLocation"],keyof ResolverInputTypes["HasMetafields"]>;
 		['...on Customer']?: Omit<ResolverInputTypes["Customer"],keyof ResolverInputTypes["HasMetafields"]>;
+		['...on Location']?: Omit<ResolverInputTypes["Location"],keyof ResolverInputTypes["HasMetafields"]>;
+		['...on Market']?: Omit<ResolverInputTypes["Market"],keyof ResolverInputTypes["HasMetafields"]>;
 		['...on Order']?: Omit<ResolverInputTypes["Order"],keyof ResolverInputTypes["HasMetafields"]>;
 		['...on Page']?: Omit<ResolverInputTypes["Page"],keyof ResolverInputTypes["HasMetafields"]>;
 		['...on Product']?: Omit<ResolverInputTypes["Product"],keyof ResolverInputTypes["HasMetafields"]>;
@@ -6444,10 +7957,10 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 		['...on Shop']?: Omit<ResolverInputTypes["Shop"],keyof ResolverInputTypes["HasMetafields"]>;
 		__typename?: boolean | `@${string}`
 }>;
-	/** Identifies a metafield on an owner resource by namespace and key. */
+	/** The input fields to identify a metafield on an owner resource by namespace and key. */
 ["HasMetafieldsIdentifier"]: {
-	/** A container for a set of metafields. */
-	namespace: string,
+	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,
 	/** The identifier for the metafield. */
 	key: string
 };
@@ -6455,9 +7968,9 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 ["Image"]: AliasType<{
 	/** A word or phrase to share the nature or contents of an image. */
 	altText?:boolean | `@${string}`,
-	/** The original height of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original height of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	height?:boolean | `@${string}`,
-	/** A unique identifier for the image. */
+	/** A unique ID for the image. */
 	id?:boolean | `@${string}`,
 	/** The location of the original image as a URL.
 
@@ -6474,7 +7987,7 @@ transformedSrc?: [{	/** Image width in pixels between 1 and 5760. */
 	preferredContentType?: ResolverInputTypes["ImageContentType"] | undefined | null},boolean | `@${string}`],
 url?: [{	/** A set of options to transform the original image. */
 	transform?: ResolverInputTypes["ImageTransformInput"] | undefined | null},boolean | `@${string}`],
-	/** The original width of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original width of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	width?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
@@ -6502,13 +8015,16 @@ url?: [{	/** A set of options to transform the original image. */
 }>;
 	/** The available options for transforming an image.
 
-All transformation options are considered best effort. Any transformation that the original image type doesn't support will be ignored.
+All transformation options are considered best effort. Any transformation that
+the original image type doesn't support will be ignored.
  */
 ["ImageTransformInput"]: {
 	/** The region of the image to remain after cropping.
-Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields, where the `maxWidth` and `maxHeight` aren't equal.
+Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields,
+where the `maxWidth` and `maxHeight` aren't equal.
 The `crop` argument should coincide with the smaller value. A smaller `maxWidth` indicates a `LEFT` or `RIGHT` crop, while
-a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{ maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
+a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{
+maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
 in an image with a width of 5 and height of 10, where the right side of the image is removed.
  */
 	crop?: ResolverInputTypes["CropRegion"] | undefined | null,
@@ -6526,6 +8042,18 @@ Supported conversions: `.svg` to `.png`, any file type to `.jpg`, and any file t
  */
 	preferredContentType?: ResolverInputTypes["ImageContentType"] | undefined | null
 };
+	/** Provide details about the contexts influenced by the @inContext directive on a field. */
+["InContextAnnotation"]: AliasType<{
+	description?:boolean | `@${string}`,
+	type?:ResolverInputTypes["InContextAnnotationType"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** This gives information about the type of context that impacts a field. For example, for a query with @inContext(language: "EN"), the type would point to the name: LanguageCode and kind: ENUM. */
+["InContextAnnotationType"]: AliasType<{
+	kind?:boolean | `@${string}`,
+	name?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
 	/** A [JSON](https://www.json.org/json-en.html) object.
 
 Example value:
@@ -6551,7 +8079,7 @@ Example value:
 	name?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** ISO 639-1 language codes supported by Shopify. */
+	/** Language codes supported by Shopify. */
 ["LanguageCode"]:LanguageCode;
 	/** Information about the localized experiences configured for the shop. */
 ["Localization"]: AliasType<{
@@ -6563,14 +8091,23 @@ Example value:
 	country?:ResolverInputTypes["Country"],
 	/** The language of the active localized experience. Use the `@inContext` directive to change this value. */
 	language?:ResolverInputTypes["Language"],
+	/** The market including the country of the active localized experience. Use the `@inContext` directive to change this value. */
+	market?:ResolverInputTypes["Market"],
 		__typename?: boolean | `@${string}`
 }>;
 	/** Represents a location where product inventory is held. */
 ["Location"]: AliasType<{
 	/** The address of the location. */
 	address?:ResolverInputTypes["LocationAddress"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
+	key: string},ResolverInputTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** The name of the location. */
 	name?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
@@ -6634,14 +8171,11 @@ Example value:
 	/** The second line of the address. Typically the number of the apartment, suite, or unit.
  */
 	address2?:boolean | `@${string}`,
-	/** The name of the city, district, village, or town.
- */
+	/** The name of the city, district, village, or town. */
 	city?:boolean | `@${string}`,
-	/** The name of the customer's company or organization.
- */
+	/** The name of the customer's company or organization. */
 	company?:boolean | `@${string}`,
-	/** The name of the country.
- */
+	/** The name of the country. */
 	country?:boolean | `@${string}`,
 	/** The two-letter code for the country of the address.
 
@@ -6660,7 +8194,7 @@ formatted?: [{	/** Whether to include the customer's name in the formatted addre
 	withCompany?: boolean | undefined | null},boolean | `@${string}`],
 	/** A comma-separated list of the values for city, province, and country. */
 	formattedArea?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The last name of the customer. */
 	lastName?:boolean | `@${string}`,
@@ -6668,8 +8202,7 @@ formatted?: [{	/** Whether to include the customer's name in the formatted addre
 	latitude?:boolean | `@${string}`,
 	/** The longitude coordinate of the customer address. */
 	longitude?:boolean | `@${string}`,
-	/** The full name of the customer, based on firstName and lastName.
- */
+	/** The full name of the customer, based on firstName and lastName. */
 	name?:boolean | `@${string}`,
 	/** A unique phone number for the customer.
 
@@ -6678,7 +8211,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	phone?:boolean | `@${string}`,
 	/** The region of the address, such as the province, state, or district. */
 	province?:boolean | `@${string}`,
-	/** The two-letter code for the region.
+	/** The alphanumeric code for the region.
 
 For example, ON.
  */
@@ -6707,7 +8240,7 @@ For example, ON.
 	node?:ResolverInputTypes["MailingAddress"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields accepted to create or update a mailing address. */
+	/** The input fields to create or update a mailing address. */
 ["MailingAddressInput"]: {
 	/** The first line of the address. Typically the street address or PO Box number.
  */
@@ -6754,12 +8287,32 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	value?:ResolverInputTypes["PricingValue"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** A group of one or more regions of the world that a merchant is targeting for sales. To learn more about markets, refer to [the Shopify Markets conceptual overview](/docs/apps/markets). */
+["Market"]: AliasType<{
+	/** A human-readable unique string for the market automatically generated from its title.
+ */
+	handle?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
+	key: string},ResolverInputTypes["Metafield"]],
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
+	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Represents a media interface. */
 ["Media"]:AliasType<{
 		/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ResolverInputTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ResolverInputTypes["Image"];
 		['...on ExternalVideo']?: Omit<ResolverInputTypes["ExternalVideo"],keyof ResolverInputTypes["Media"]>;
@@ -6796,22 +8349,35 @@ Formatted using E.164 standard. For example, _+16135551111_.
 ["MediaImage"]: AliasType<{
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The image for the media. */
 	image?:ResolverInputTypes["Image"],
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ResolverInputTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ResolverInputTypes["Image"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** A menu used for navigation within a storefront.
+	/** A media presentation. */
+["MediaPresentation"]: AliasType<{
+asJson?: [{	/** The format to transform the settings. */
+	format: ResolverInputTypes["MediaPresentationFormat"]},boolean | `@${string}`],
+	/** A globally-unique ID. */
+	id?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The possible formats for a media presentation. */
+["MediaPresentationFormat"]:MediaPresentationFormat;
+	/** A [navigation menu](https://help.shopify.com/manual/online-store/menus-and-links) representing a hierarchy
+of hyperlinks (items).
  */
 ["Menu"]: AliasType<{
 	/** The menu's handle. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The menu's child items. */
 	items?:ResolverInputTypes["MenuItem"],
@@ -6821,13 +8387,14 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	title?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A menu item within a parent menu.
- */
+	/** A menu item within a parent menu. */
 ["MenuItem"]: AliasType<{
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The menu item's child items. */
 	items?:ResolverInputTypes["MenuItem"],
+	/** The linked resource. */
+	resource?:ResolverInputTypes["MenuItemResource"],
 	/** The ID of the linked resource. */
 	resourceId?:boolean | `@${string}`,
 	/** The menu item's tags to filter a collection. */
@@ -6838,6 +8405,18 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	type?:boolean | `@${string}`,
 	/** The menu item's URL. */
 	url?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The list of possible resources a `MenuItem` can reference.
+ */
+["MenuItemResource"]: AliasType<{
+	Article?:ResolverInputTypes["Article"],
+	Blog?:ResolverInputTypes["Blog"],
+	Collection?:ResolverInputTypes["Collection"],
+	Metaobject?:ResolverInputTypes["Metaobject"],
+	Page?:ResolverInputTypes["Page"],
+	Product?:ResolverInputTypes["Product"],
+	ShopPolicy?:ResolverInputTypes["ShopPolicy"],
 		__typename?: boolean | `@${string}`
 }>;
 	/** A menu item type. */
@@ -6855,15 +8434,15 @@ comprised of keys, values, and value types.
 	createdAt?:boolean | `@${string}`,
 	/** The description of a metafield. */
 	description?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-	/** The key name for a metafield. */
+	/** The unique identifier for the metafield within its namespace. */
 	key?:boolean | `@${string}`,
-	/** The namespace for a metafield. */
+	/** The container for a group of metafields that the metafield is associated with. */
 	namespace?:boolean | `@${string}`,
-	/** The parent object that the metafield belongs to. */
+	/** The type of resource that the metafield is attached to. */
 	parentResource?:ResolverInputTypes["MetafieldParentResource"],
-	/** Returns a reference object if the metafield definition's type is a resource reference. */
+	/** Returns a reference object if the metafield's type is a resource reference. */
 	reference?:ResolverInputTypes["MetafieldReference"],
 references?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
@@ -6871,13 +8450,25 @@ references?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null},ResolverInputTypes["MetafieldReferenceConnection"]],
 	/** The type name of the metafield.
-See the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
+Refer to the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
  */
 	type?:boolean | `@${string}`,
-	/** The date and time when the storefront metafield was updated. */
+	/** The date and time when the metafield was last updated. */
 	updatedAt?:boolean | `@${string}`,
-	/** The value of a metafield. */
+	/** The data stored in the metafield. Always stored as a string, regardless of the metafield's type. */
 	value?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Possible error codes that can be returned by `MetafieldDeleteUserError`. */
+["MetafieldDeleteErrorCode"]:MetafieldDeleteErrorCode;
+	/** An error that occurs during the execution of cart metafield deletion. */
+["MetafieldDeleteUserError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The path to the input field that caused the error. */
+	field?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** A filter used to view a subset of products in a collection matching a specific metafield value.
@@ -6900,8 +8491,13 @@ Only the following metafield types are currently supported:
 ["MetafieldParentResource"]: AliasType<{
 	Article?:ResolverInputTypes["Article"],
 	Blog?:ResolverInputTypes["Blog"],
+	Cart?:ResolverInputTypes["Cart"],
 	Collection?:ResolverInputTypes["Collection"],
+	Company?:ResolverInputTypes["Company"],
+	CompanyLocation?:ResolverInputTypes["CompanyLocation"],
 	Customer?:ResolverInputTypes["Customer"],
+	Location?:ResolverInputTypes["Location"],
+	Market?:ResolverInputTypes["Market"],
 	Order?:ResolverInputTypes["Order"],
 	Page?:ResolverInputTypes["Page"],
 	Product?:ResolverInputTypes["Product"],
@@ -6916,6 +8512,7 @@ Only the following metafield types are currently supported:
 	GenericFile?:ResolverInputTypes["GenericFile"],
 	MediaImage?:ResolverInputTypes["MediaImage"],
 	Metaobject?:ResolverInputTypes["Metaobject"],
+	Model3d?:ResolverInputTypes["Model3d"],
 	Page?:ResolverInputTypes["Page"],
 	Product?:ResolverInputTypes["Product"],
 	ProductVariant?:ResolverInputTypes["ProductVariant"],
@@ -6942,6 +8539,20 @@ Only the following metafield types are currently supported:
 	node?:ResolverInputTypes["MetafieldReference"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** An error that occurs during the execution of `MetafieldsSet`. */
+["MetafieldsSetUserError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The index of the array element that's causing the error. */
+	elementIndex?:boolean | `@${string}`,
+	/** The path to the input field that caused the error. */
+	field?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Possible error codes that can be returned by `MetafieldsSetUserError`. */
+["MetafieldsSetUserErrorCode"]:MetafieldsSetUserErrorCode;
 	/** An instance of a user-defined model based on a MetaobjectDefinition. */
 ["Metaobject"]: AliasType<{
 field?: [{	/** The key of the field. */
@@ -6952,8 +8563,14 @@ Omitted object keys can be assumed null, and no guarantees are made about field 
 	fields?:ResolverInputTypes["MetaobjectField"],
 	/** The unique handle of the metaobject. Useful as a custom ID. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
+	/** The URL used for viewing the metaobject on the shop's Online Store. Returns `null` if the metaobject definition doesn't have the `online_store` capability. */
+	onlineStoreUrl?:boolean | `@${string}`,
+	/** The metaobject's SEO information. Returns `null` if the metaobject definition
+doesn't have the `renderable` capability.
+ */
+	seo?:ResolverInputTypes["MetaobjectSEO"],
 	/** The type of the metaobject. Defines the namespace of its associated metafields. */
 	type?:boolean | `@${string}`,
 	/** The date and time when the metaobject was last updated. */
@@ -7006,14 +8623,24 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	/** The type of the metaobject. */
 	type: string
 };
+	/** SEO information for a metaobject. */
+["MetaobjectSEO"]: AliasType<{
+	/** The meta description. */
+	description?:ResolverInputTypes["MetaobjectField"],
+	/** The SEO title. */
+	title?:ResolverInputTypes["MetaobjectField"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Represents a Shopify hosted 3D model. */
 ["Model3d"]: AliasType<{
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ResolverInputTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ResolverInputTypes["Image"],
 	/** The sources for a 3d model. */
@@ -7032,7 +8659,7 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	url?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the fields for a monetary value with currency. */
+	/** The input fields for a monetary value with currency. */
 ["MoneyInput"]: {
 	/** Decimal money amount. */
 	amount: ResolverInputTypes["Decimal"],
@@ -7050,7 +8677,9 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 }>;
 	/** The schema’s entry-point for mutations. This acts as the public, top-level API from which all mutation queries must start. */
 ["Mutation"]: AliasType<{
-cartAttributesUpdate?: [{	/** An array of key-value pairs that contains additional information about the cart. */
+cartAttributesUpdate?: [{	/** An array of key-value pairs that contains additional information about the cart.
+
+The input must not contain more than `250` values. */
 	attributes: Array<ResolverInputTypes["AttributeInput"]>,	/** The ID of the cart. */
 	cartId: string},ResolverInputTypes["CartAttributesUpdatePayload"]],
 cartBuyerIdentityUpdate?: [{	/** The ID of the cart. */
@@ -7063,23 +8692,46 @@ cartCreate?: [{	/** The fields used to create a cart. */
 	input?: ResolverInputTypes["CartInput"] | undefined | null},ResolverInputTypes["CartCreatePayload"]],
 cartDiscountCodesUpdate?: [{	/** The ID of the cart. */
 	cartId: string,	/** The case-insensitive discount codes that the customer added at checkout.
- */
+
+The input must not contain more than `250` values. */
 	discountCodes?: Array<string> | undefined | null},ResolverInputTypes["CartDiscountCodesUpdatePayload"]],
-cartLinesAdd?: [{	/** A list of merchandise lines to add to the cart. */
-	lines: Array<ResolverInputTypes["CartLineInput"]>,	/** The ID of the cart. */
-	cartId: string},ResolverInputTypes["CartLinesAddPayload"]],
+cartLinesAdd?: [{	/** The ID of the cart. */
+	cartId: string,	/** A list of merchandise lines to add to the cart.
+
+The input must not contain more than `250` values. */
+	lines: Array<ResolverInputTypes["CartLineInput"]>},ResolverInputTypes["CartLinesAddPayload"]],
 cartLinesRemove?: [{	/** The ID of the cart. */
-	cartId: string,	/** The merchandise line IDs to remove. */
+	cartId: string,	/** The merchandise line IDs to remove.
+
+The input must not contain more than `250` values. */
 	lineIds: Array<string>},ResolverInputTypes["CartLinesRemovePayload"]],
 cartLinesUpdate?: [{	/** The ID of the cart. */
-	cartId: string,	/** The merchandise lines to update. */
+	cartId: string,	/** The merchandise lines to update.
+
+The input must not contain more than `250` values. */
 	lines: Array<ResolverInputTypes["CartLineUpdateInput"]>},ResolverInputTypes["CartLinesUpdatePayload"]],
+cartMetafieldDelete?: [{	/** The input fields used to delete a cart metafield. */
+	input: ResolverInputTypes["CartMetafieldDeleteInput"]},ResolverInputTypes["CartMetafieldDeletePayload"]],
+cartMetafieldsSet?: [{	/** The list of Cart metafield values to set. Maximum of 25.
+
+The input must not contain more than `250` values. */
+	metafields: Array<ResolverInputTypes["CartMetafieldsSetInput"]>},ResolverInputTypes["CartMetafieldsSetPayload"]],
 cartNoteUpdate?: [{	/** The ID of the cart. */
 	cartId: string,	/** The note on the cart. */
-	note?: string | undefined | null},ResolverInputTypes["CartNoteUpdatePayload"]],
+	note: string},ResolverInputTypes["CartNoteUpdatePayload"]],
+cartPaymentUpdate?: [{	/** The ID of the cart. */
+	cartId: string,	/** The payment information for the cart that will be used at checkout. */
+	payment: ResolverInputTypes["CartPaymentInput"]},ResolverInputTypes["CartPaymentUpdatePayload"]],
 cartSelectedDeliveryOptionsUpdate?: [{	/** The ID of the cart. */
-	cartId: string,	/** The selected delivery options. */
+	cartId: string,	/** The selected delivery options.
+
+The input must not contain more than `250` values. */
 	selectedDeliveryOptions: Array<ResolverInputTypes["CartSelectedDeliveryOptionInput"]>},ResolverInputTypes["CartSelectedDeliveryOptionsUpdatePayload"]],
+cartSubmitForCompletion?: [{	/** The ID of the cart. */
+	cartId: string,	/** The attemptToken is used to guarantee an idempotent result.
+If more than one call uses the same attemptToken within a short period of time, only one will be accepted.
+ */
+	attemptToken: string},ResolverInputTypes["CartSubmitForCompletionPayload"]],
 checkoutAttributesUpdateV2?: [{	/** The ID of the checkout. */
 	checkoutId: string,	/** The checkout attributes to update. */
 	input: ResolverInputTypes["CheckoutAttributesUpdateV2Input"]},ResolverInputTypes["CheckoutAttributesUpdateV2Payload"]],
@@ -7110,20 +8762,30 @@ checkoutEmailUpdateV2?: [{	/** The ID of the checkout. */
 checkoutGiftCardRemoveV2?: [{	/** The ID of the Applied Gift Card to remove from the Checkout. */
 	appliedGiftCardId: string,	/** The ID of the checkout. */
 	checkoutId: string},ResolverInputTypes["CheckoutGiftCardRemoveV2Payload"]],
-checkoutGiftCardsAppend?: [{	/** A list of gift card codes to append to the checkout. */
+checkoutGiftCardsAppend?: [{	/** A list of gift card codes to append to the checkout.
+
+The input must not contain more than `250` values. */
 	giftCardCodes: Array<string>,	/** The ID of the checkout. */
 	checkoutId: string},ResolverInputTypes["CheckoutGiftCardsAppendPayload"]],
-checkoutLineItemsAdd?: [{	/** A list of line item objects to add to the checkout. */
+checkoutLineItemsAdd?: [{	/** A list of line item objects to add to the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems: Array<ResolverInputTypes["CheckoutLineItemInput"]>,	/** The ID of the checkout. */
 	checkoutId: string},ResolverInputTypes["CheckoutLineItemsAddPayload"]],
 checkoutLineItemsRemove?: [{	/** The checkout on which to remove line items. */
-	checkoutId: string,	/** Line item ids to remove. */
+	checkoutId: string,	/** Line item ids to remove.
+
+The input must not contain more than `250` values. */
 	lineItemIds: Array<string>},ResolverInputTypes["CheckoutLineItemsRemovePayload"]],
-checkoutLineItemsReplace?: [{	/** A list of line item objects to set on the checkout. */
+checkoutLineItemsReplace?: [{	/** A list of line item objects to set on the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems: Array<ResolverInputTypes["CheckoutLineItemInput"]>,	/** The ID of the checkout. */
 	checkoutId: string},ResolverInputTypes["CheckoutLineItemsReplacePayload"]],
 checkoutLineItemsUpdate?: [{	/** The checkout on which to update line items. */
-	checkoutId: string,	/** Line items to update. */
+	checkoutId: string,	/** Line items to update.
+
+The input must not contain more than `250` values. */
 	lineItems: Array<ResolverInputTypes["CheckoutLineItemUpdateInput"]>},ResolverInputTypes["CheckoutLineItemsUpdatePayload"]],
 checkoutShippingAddressUpdateV2?: [{	/** The shipping address to where the line items will be shipped. */
 	shippingAddress: ResolverInputTypes["MailingAddressInput"],	/** The ID of the checkout. */
@@ -7179,10 +8841,11 @@ This interface is used by the [node](https://shopify.dev/api/admin-graphql/unsta
 and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) queries.
  */
 ["Node"]:AliasType<{
-		/** A globally-unique identifier. */
+		/** A globally-unique ID. */
 	id?:boolean | `@${string}`;
 		['...on AppliedGiftCard']?: Omit<ResolverInputTypes["AppliedGiftCard"],keyof ResolverInputTypes["Node"]>;
 		['...on Article']?: Omit<ResolverInputTypes["Article"],keyof ResolverInputTypes["Node"]>;
+		['...on BaseCartLine']?: Omit<ResolverInputTypes["BaseCartLine"],keyof ResolverInputTypes["Node"]>;
 		['...on Blog']?: Omit<ResolverInputTypes["Blog"],keyof ResolverInputTypes["Node"]>;
 		['...on Cart']?: Omit<ResolverInputTypes["Cart"],keyof ResolverInputTypes["Node"]>;
 		['...on CartLine']?: Omit<ResolverInputTypes["CartLine"],keyof ResolverInputTypes["Node"]>;
@@ -7190,11 +8853,17 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 		['...on CheckoutLineItem']?: Omit<ResolverInputTypes["CheckoutLineItem"],keyof ResolverInputTypes["Node"]>;
 		['...on Collection']?: Omit<ResolverInputTypes["Collection"],keyof ResolverInputTypes["Node"]>;
 		['...on Comment']?: Omit<ResolverInputTypes["Comment"],keyof ResolverInputTypes["Node"]>;
+		['...on Company']?: Omit<ResolverInputTypes["Company"],keyof ResolverInputTypes["Node"]>;
+		['...on CompanyContact']?: Omit<ResolverInputTypes["CompanyContact"],keyof ResolverInputTypes["Node"]>;
+		['...on CompanyLocation']?: Omit<ResolverInputTypes["CompanyLocation"],keyof ResolverInputTypes["Node"]>;
+		['...on ComponentizableCartLine']?: Omit<ResolverInputTypes["ComponentizableCartLine"],keyof ResolverInputTypes["Node"]>;
 		['...on ExternalVideo']?: Omit<ResolverInputTypes["ExternalVideo"],keyof ResolverInputTypes["Node"]>;
 		['...on GenericFile']?: Omit<ResolverInputTypes["GenericFile"],keyof ResolverInputTypes["Node"]>;
 		['...on Location']?: Omit<ResolverInputTypes["Location"],keyof ResolverInputTypes["Node"]>;
 		['...on MailingAddress']?: Omit<ResolverInputTypes["MailingAddress"],keyof ResolverInputTypes["Node"]>;
+		['...on Market']?: Omit<ResolverInputTypes["Market"],keyof ResolverInputTypes["Node"]>;
 		['...on MediaImage']?: Omit<ResolverInputTypes["MediaImage"],keyof ResolverInputTypes["Node"]>;
+		['...on MediaPresentation']?: Omit<ResolverInputTypes["MediaPresentation"],keyof ResolverInputTypes["Node"]>;
 		['...on Menu']?: Omit<ResolverInputTypes["Menu"],keyof ResolverInputTypes["Node"]>;
 		['...on MenuItem']?: Omit<ResolverInputTypes["MenuItem"],keyof ResolverInputTypes["Node"]>;
 		['...on Metafield']?: Omit<ResolverInputTypes["Metafield"],keyof ResolverInputTypes["Node"]>;
@@ -7219,19 +8888,22 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 		['...on Article']?: Omit<ResolverInputTypes["Article"],keyof ResolverInputTypes["OnlineStorePublishable"]>;
 		['...on Blog']?: Omit<ResolverInputTypes["Blog"],keyof ResolverInputTypes["OnlineStorePublishable"]>;
 		['...on Collection']?: Omit<ResolverInputTypes["Collection"],keyof ResolverInputTypes["OnlineStorePublishable"]>;
+		['...on Metaobject']?: Omit<ResolverInputTypes["Metaobject"],keyof ResolverInputTypes["OnlineStorePublishable"]>;
 		['...on Page']?: Omit<ResolverInputTypes["Page"],keyof ResolverInputTypes["OnlineStorePublishable"]>;
 		['...on Product']?: Omit<ResolverInputTypes["Product"],keyof ResolverInputTypes["OnlineStorePublishable"]>;
 		__typename?: boolean | `@${string}`
 }>;
 	/** An order is a customer’s completed request to purchase one or more products from a shop. An order is created when a customer completes the checkout process, during which time they provides an email address, billing address and payment information. */
 ["Order"]: AliasType<{
+	/** The address associated with the payment method. */
+	billingAddress?:ResolverInputTypes["MailingAddress"],
 	/** The reason for the order's cancellation. Returns `null` if the order wasn't canceled. */
 	cancelReason?:boolean | `@${string}`,
 	/** The date and time when the order was canceled. Returns null if the order wasn't canceled. */
 	canceledAt?:boolean | `@${string}`,
 	/** The code of the currency used for the payment. */
 	currencyCode?:boolean | `@${string}`,
-	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes are not included unless the order is a taxes-included order. */
+	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes aren't included unless the order is a taxes-included order. */
 	currentSubtotalPrice?:ResolverInputTypes["MoneyV2"],
 	/** The total cost of duties for the order, including refunds. */
 	currentTotalDuties?:ResolverInputTypes["MoneyV2"],
@@ -7239,7 +8911,7 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 	currentTotalPrice?:ResolverInputTypes["MoneyV2"],
 	/** The total of all taxes applied to the order, excluding taxes for returned line items. */
 	currentTotalTax?:ResolverInputTypes["MoneyV2"],
-	/** A list of the custom attributes added to the order. */
+	/** A list of the custom attributes added to the order. For example, whether an order is a customer's first. */
 	customAttributes?:ResolverInputTypes["Attribute"],
 	/** The locale code in which this specific order happened. */
 	customerLocale?:boolean | `@${string}`,
@@ -7259,7 +8931,7 @@ discountApplications?: [{	/** Returns up to the first `n` elements from the list
 	financialStatus?:boolean | `@${string}`,
 	/** The fulfillment status for the order. */
 	fulfillmentStatus?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
@@ -7267,10 +8939,12 @@ lineItems?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null},ResolverInputTypes["OrderLineItemConnection"]],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** Unique identifier for the order that appears on the order.
 For example, _#1000_ or _Store1001.
@@ -7358,7 +9032,7 @@ successfulFulfillments?: [{	/** Truncate the array result to this size. */
 	discountAllocations?:ResolverInputTypes["DiscountAllocation"],
 	/** The total price of the line item, including discounts, and displayed in the presentment currency. */
 	discountedTotalPrice?:ResolverInputTypes["MoneyV2"],
-	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it is displayed in the presentment currency. */
+	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it's displayed in the presentment currency. */
 	originalTotalPrice?:ResolverInputTypes["MoneyV2"],
 	/** The number of products variants associated to the line item. */
 	quantity?:boolean | `@${string}`,
@@ -7400,12 +9074,14 @@ successfulFulfillments?: [{	/** Truncate the array result to this size. */
 	createdAt?:boolean | `@${string}`,
 	/** A human-friendly unique string for the page automatically generated from its title. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?:boolean | `@${string}`,
@@ -7413,6 +9089,8 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	seo?:ResolverInputTypes["SEO"],
 	/** The title of the page. */
 	title?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 	/** The timestamp of the latest page update. */
 	updatedAt?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
@@ -7468,7 +9146,7 @@ For more information, please read our [GraphQL Pagination Usage Guide](https://s
 	creditCard?:ResolverInputTypes["CreditCard"],
 	/** A message describing a processing error during asynchronous processing. */
 	errorMessage?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** A client-side generated token to identify a payment and perform idempotent operations.
 For more information, refer to
@@ -7495,9 +9173,11 @@ For more information, refer to
 	countryCode?:boolean | `@${string}`,
 	/** The three-letter code for the shop's primary currency. */
 	currencyCode?:boolean | `@${string}`,
-	/** A list of enabled currencies (ISO 4217 format) that the shop accepts. Merchants can enable currencies from their Shopify Payments settings in the Shopify admin. */
+	/** A list of enabled currencies (ISO 4217 format) that the shop accepts.
+Merchants can enable currencies from their Shopify Payments settings in the Shopify admin.
+ */
 	enabledPresentmentCurrencies?:boolean | `@${string}`,
-	/** The shop’s Shopify Payments account id. */
+	/** The shop’s Shopify Payments account ID. */
 	shopifyPaymentsAccountId?:boolean | `@${string}`,
 	/** List of the digital wallets which the shop supports. */
 	supportedDigitalWallets?:boolean | `@${string}`,
@@ -7505,7 +9185,30 @@ For more information, refer to
 }>;
 	/** The valid values for the types of payment token. */
 ["PaymentTokenType"]:PaymentTokenType;
-	/** A filter used to view a subset of products in a collection matching a specific price range. */
+	/** Decides the distribution of results. */
+["PredictiveSearchLimitScope"]:PredictiveSearchLimitScope;
+	/** A predictive search result represents a list of products, collections, pages, articles, and query suggestions
+that matches the predictive search query.
+ */
+["PredictiveSearchResult"]: AliasType<{
+	/** The articles that match the search query. */
+	articles?:ResolverInputTypes["Article"],
+	/** The articles that match the search query. */
+	collections?:ResolverInputTypes["Collection"],
+	/** The pages that match the search query. */
+	pages?:ResolverInputTypes["Page"],
+	/** The products that match the search query. */
+	products?:ResolverInputTypes["Product"],
+	/** The query suggestions that are relevant to the search query. */
+	queries?:ResolverInputTypes["SearchQuerySuggestion"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The types of search items to perform predictive search on. */
+["PredictiveSearchType"]:PredictiveSearchType;
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+["PreferenceDeliveryMethodType"]:PreferenceDeliveryMethodType;
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific price range.
+ */
 ["PriceRangeFilter"]: {
 	/** The minimum price in the range. Defaults to zero. */
 	min?: number | undefined | null,
@@ -7524,8 +9227,17 @@ For more information, refer to
 	PricingPercentageValue?:ResolverInputTypes["PricingPercentageValue"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** A product represents an individual item for sale in a Shopify store. Products are often physical, but they don't have to be.
-For example, a digital download (such as a movie, music or ebook file) also qualifies as a product, as do services (such as equipment rental, work for hire, customization of another product or an extended warranty). */
+	/** The `Product` object lets you manage products in a merchant’s store.
+
+Products are the goods and services that merchants offer to customers.
+They can include various details such as title, description, price, images, and options such as size or color.
+You can use [product variants](/docs/api/storefront/latest/objects/ProductVariant)
+to create or update different versions of the same product.
+You can also add or update product [media](/docs/api/storefront/latest/interfaces/Media).
+Products can be organized by grouping them into a [collection](/docs/api/storefront/latest/objects/Collection).
+
+Learn more about working with [products and collections](/docs/storefronts/headless/building-with-the-storefront-api/products-collections).
+ */
 ["Product"]: AliasType<{
 	/** Indicates if at least one product variant is available for sale. */
 	availableForSale?:boolean | `@${string}`,
@@ -7535,24 +9247,28 @@ collections?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null},ResolverInputTypes["CollectionConnection"]],
-	/** The compare at price of the product across all variants. */
+	/** The [compare-at price range](https://help.shopify.com/manual/products/details/product-pricing/sale-pricing) of the product in the shop's default currency. */
 	compareAtPriceRange?:ResolverInputTypes["ProductPriceRange"],
 	/** The date and time when the product was created. */
 	createdAt?:boolean | `@${string}`,
-description?: [{	/** Truncates string after the given length. */
+description?: [{	/** Truncates a string after the given length. */
 	truncateAt?: number | undefined | null},boolean | `@${string}`],
-	/** The description of the product, complete with HTML formatting. */
+	/** The description of the product, with
+HTML tags. For example, the description might include
+bold `<strong></strong>` and italic `<i></i>` text.
+ */
 	descriptionHtml?:boolean | `@${string}`,
 	/** The featured image for the product.
 
 This field is functionally equivalent to `images(first: 1)`.
  */
 	featuredImage?:ResolverInputTypes["Image"],
-	/** A human-friendly unique string for the Product automatically generated from its title.
-They are used by the Liquid templating language to refer to objects.
+	/** A unique, human-readable string of the product's title.
+A handle can contain letters, hyphens (`-`), and numbers, but no spaces.
+The handle is used in the online store URL for the product.
  */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 images?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
@@ -7570,22 +9286,31 @@ media?: [{	/** Returns up to the first `n` elements from the list. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
 	sortKey?: ResolverInputTypes["ProductMediaSortKeys"] | undefined | null},ResolverInputTypes["MediaConnection"]],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
-	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
+	/** The product's URL on the online store.
+If `null`, then the product isn't published to the online store sales channel.
+ */
 	onlineStoreUrl?:boolean | `@${string}`,
 options?: [{	/** Truncate the array result to this size. */
 	first?: number | undefined | null},ResolverInputTypes["ProductOption"]],
-	/** The price range. */
+	/** The minimum and maximum prices of a product, expressed in decimal numbers.
+For example, if the product is priced between $10.00 and $50.00,
+then the price range is $10.00 - $50.00.
+ */
 	priceRange?:ResolverInputTypes["ProductPriceRange"],
-	/** A categorization that a product can be tagged with, commonly used for filtering and searching. */
+	/** The [product type](https://help.shopify.com/manual/products/details/product-type)
+that merchants define.
+ */
 	productType?:boolean | `@${string}`,
 	/** The date and time when the product was published to the channel. */
 	publishedAt?:boolean | `@${string}`,
-	/** Whether the product can only be purchased with a selling plan. */
+	/** Whether the product can only be purchased with a [selling plan](/docs/apps/build/purchase-options/subscriptions/selling-plans). Products that are sold on subscription (`requiresSellingPlan: true`) can be updated only for online stores. If you update a product to be subscription-only (`requiresSellingPlan:false`), then the product is unpublished from all channels, except the online store. */
 	requiresSellingPlan?:boolean | `@${string}`,
 sellingPlanGroups?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
@@ -7593,24 +9318,39 @@ sellingPlanGroups?: [{	/** Returns up to the first `n` elements from the list. *
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null},ResolverInputTypes["SellingPlanGroupConnection"]],
-	/** The product's SEO information. */
+	/** The [SEO title and description](https://help.shopify.com/manual/promoting-marketing/seo/adding-keywords)
+that are associated with a product.
+ */
 	seo?:ResolverInputTypes["SEO"],
-	/** A comma separated list of tags that have been added to the product.
-Additional access scope required for private apps: unauthenticated_read_product_tags.
+	/** A comma-separated list of searchable keywords that are
+associated with the product. For example, a merchant might apply the `sports`
+and `summer` tags to products that are associated with sportwear for summer.
+Updating `tags` overwrites any existing tags that were previously added to the product.
+To add new tags without overwriting existing tags,
+use the GraphQL Admin API's [`tagsAdd`](/docs/api/admin-graphql/latest/mutations/tagsadd)
+mutation.
  */
 	tags?:boolean | `@${string}`,
-	/** The product’s title. */
+	/** The name for the product that displays to customers. The title is used to construct the product's handle.
+For example, if a product is titled "Black Sunglasses", then the handle is `black-sunglasses`.
+ */
 	title?:boolean | `@${string}`,
-	/** The total quantity of inventory in stock for this Product. */
+	/** The quantity of inventory that's in stock. */
 	totalInventory?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
 	/** The date and time when the product was last modified.
 A product's `updatedAt` value can change for different reasons. For example, if an order
 is placed for a product that has inventory tracking set up, then the inventory adjustment
 is counted as an update.
  */
 	updatedAt?:boolean | `@${string}`,
-variantBySelectedOptions?: [{	/** The input fields used for a selected option. */
-	selectedOptions: Array<ResolverInputTypes["SelectedOptionInput"]>},ResolverInputTypes["ProductVariant"]],
+variantBySelectedOptions?: [{	/** The input fields used for a selected option.
+
+The input must not contain more than `250` values. */
+	selectedOptions: Array<ResolverInputTypes["SelectedOptionInput"]>,	/** Whether to ignore unknown product options. */
+	ignoreUnknownOptions?: boolean | undefined | null,	/** Whether to perform case insensitive match on option names and values. */
+	caseInsensitiveMatch?: boolean | undefined | null},ResolverInputTypes["ProductVariant"]],
 variants?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
@@ -7618,7 +9358,7 @@ variants?: [{	/** Returns up to the first `n` elements from the list. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
 	sortKey?: ResolverInputTypes["ProductVariantSortKeys"] | undefined | null},ResolverInputTypes["ProductVariantConnection"]],
-	/** The product’s vendor name. */
+	/** The name of the product's vendor. */
 	vendor?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
@@ -7646,7 +9386,10 @@ variants?: [{	/** Returns up to the first `n` elements from the list. */
 	node?:ResolverInputTypes["Product"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** A filter used to view a subset of products in a collection. */
+	/** The input fields for a filter used to view a subset of products in a collection.
+By default, the `available` and `price` filters are enabled. Filters are customized with the Shopify Search & Discovery app.
+Learn more about [customizing storefront filtering](https://help.shopify.com/manual/online-store/themes/customizing-themes/storefront-filters).
+ */
 ["ProductFilter"]: {
 	/** Filter on if the product is available for sale. */
 	available?: boolean | undefined | null,
@@ -7674,7 +9417,7 @@ Variants are selected based on permutations of these options.
 255 characters limit each.
  */
 ["ProductOption"]: AliasType<{
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The product option’s name. */
 	name?:boolean | `@${string}`,
@@ -7690,9 +9433,14 @@ Variants are selected based on permutations of these options.
 	minVariantPrice?:ResolverInputTypes["MoneyV2"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The recommendation intent that is used to generate product recommendations.
+You can use intent to generate product recommendations according to different strategies.
+ */
+["ProductRecommendationIntent"]:ProductRecommendationIntent;
 	/** The set of valid sort keys for the Product query. */
 ["ProductSortKeys"]:ProductSortKeys;
-	/** A product variant represents a different version of a product, such as differing sizes or differing colors. */
+	/** A product variant represents a different version of a product, such as differing sizes or differing colors.
+ */
 ["ProductVariant"]: AliasType<{
 	/** Indicates if the product variant is available for sale. */
 	availableForSale?:boolean | `@${string}`,
@@ -7704,15 +9452,16 @@ Variants are selected based on permutations of these options.
 	compareAtPriceV2?:ResolverInputTypes["MoneyV2"],
 	/** Whether a product is out of stock but still available for purchase (used for backorders). */
 	currentlyNotInStock?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-	/** Image associated with the product variant. This field falls back to the product image if no image is available.
- */
+	/** Image associated with the product variant. This field falls back to the product image if no image is available. */
 	image?:ResolverInputTypes["Image"],
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** The product variant’s price. */
 	price?:ResolverInputTypes["MoneyV2"],
@@ -7722,6 +9471,13 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	product?:ResolverInputTypes["Product"],
 	/** The total sellable quantity of the variant for online sales channels. */
 	quantityAvailable?:boolean | `@${string}`,
+quantityPriceBreaks?: [{	/** Returns up to the first `n` elements from the list. */
+	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
+	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
+	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
+	before?: string | undefined | null},ResolverInputTypes["QuantityPriceBreakConnection"]],
+	/** The quantity rule for the product variant in a given context. */
+	quantityRule?:ResolverInputTypes["QuantityRule"],
 	/** Whether a customer needs to provide a shipping address when placing an order for the product variant. */
 	requiresShipping?:boolean | `@${string}`,
 	/** List of product options applied to the variant. */
@@ -7734,13 +9490,15 @@ sellingPlanAllocations?: [{	/** Returns up to the first `n` elements from the li
 	reverse?: boolean | undefined | null},ResolverInputTypes["SellingPlanAllocationConnection"]],
 	/** The SKU (stock keeping unit) associated with the variant. */
 	sku?:boolean | `@${string}`,
-storeAvailability?: [{	/** Returns up to the first `n` elements from the list. */
+storeAvailability?: [{	/** Used to sort results based on proximity to the provided location. */
+	near?: ResolverInputTypes["GeoCoordinateInput"] | undefined | null,	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null,	/** Used to sort results based on proximity to the provided location. */
-	near?: ResolverInputTypes["GeoCoordinateInput"] | undefined | null},ResolverInputTypes["StoreAvailabilityConnection"]],
+	reverse?: boolean | undefined | null},ResolverInputTypes["StoreAvailabilityConnection"]],
+	/** Whether tax is charged when the product variant is sold. */
+	taxable?:boolean | `@${string}`,
 	/** The product variant’s title. */
 	title?:boolean | `@${string}`,
 	/** The unit price value for the variant based on the variant's measurement. */
@@ -7775,29 +9533,93 @@ storeAvailability?: [{	/** Returns up to the first `n` elements from the list. *
 }>;
 	/** The set of valid sort keys for the ProductVariant query. */
 ["ProductVariantSortKeys"]:ProductVariantSortKeys;
+	/** Represents information about the buyer that is interacting with the cart. */
+["PurchasingCompany"]: AliasType<{
+	/** The company associated to the order or draft order. */
+	company?:ResolverInputTypes["Company"],
+	/** The company contact associated to the order or draft order. */
+	contact?:ResolverInputTypes["CompanyContact"],
+	/** The company location associated to the order or draft order. */
+	location?:ResolverInputTypes["CompanyLocation"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** Quantity price breaks lets you offer different rates that are based on the
+amount of a specific variant being ordered.
+ */
+["QuantityPriceBreak"]: AliasType<{
+	/** Minimum quantity required to reach new quantity break price.
+ */
+	minimumQuantity?:boolean | `@${string}`,
+	/** The price of variant after reaching the minimum quanity.
+ */
+	price?:ResolverInputTypes["MoneyV2"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type for paginating through multiple QuantityPriceBreaks.
+ */
+["QuantityPriceBreakConnection"]: AliasType<{
+	/** A list of edges. */
+	edges?:ResolverInputTypes["QuantityPriceBreakEdge"],
+	/** A list of the nodes contained in QuantityPriceBreakEdge. */
+	nodes?:ResolverInputTypes["QuantityPriceBreak"],
+	/** Information to aid in pagination. */
+	pageInfo?:ResolverInputTypes["PageInfo"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type which holds one QuantityPriceBreak and a cursor during pagination.
+ */
+["QuantityPriceBreakEdge"]: AliasType<{
+	/** A cursor for use in pagination. */
+	cursor?:boolean | `@${string}`,
+	/** The item at the end of QuantityPriceBreakEdge. */
+	node?:ResolverInputTypes["QuantityPriceBreak"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The quantity rule for the product variant in a given context.
+ */
+["QuantityRule"]: AliasType<{
+	/** The value that specifies the quantity increment between minimum and maximum of the rule.
+Only quantities divisible by this value will be considered valid.
+
+The increment must be lower than or equal to the minimum and the maximum, and both minimum and maximum
+must be divisible by this value.
+ */
+	increment?:boolean | `@${string}`,
+	/** An optional value that defines the highest allowed quantity purchased by the customer.
+If defined, maximum must be lower than or equal to the minimum and must be a multiple of the increment.
+ */
+	maximum?:boolean | `@${string}`,
+	/** The value that defines the lowest allowed quantity purchased by the customer.
+The minimum must be a multiple of the quantity rule's increment.
+ */
+	minimum?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
 	/** The schema’s entry-point for queries. This acts as the public, top-level API from which all queries must start. */
 ["QueryRoot"]: AliasType<{
+article?: [{	/** The ID of the `Article`. */
+	id: string},ResolverInputTypes["Article"]],
 articles?: [{	/** Returns up to the first `n` elements from the list. */
 	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
 	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["ArticleSortKeys"] | undefined | null,	/** Supported filter parameters:
- - `author`
- - `blog_title`
- - `created_at`
- - `tag`
- - `tag_not`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ResolverInputTypes["ArticleSortKeys"] | undefined | null,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| author |
+| blog_title |
+| created_at |
+| tag |
+| tag_not |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null},ResolverInputTypes["ArticleConnection"]],
-blog?: [{	/** The ID of the `Blog`. */
-	id?: string | undefined | null,	/** The handle of the `Blog`. */
-	handle?: string | undefined | null},ResolverInputTypes["Blog"]],
+blog?: [{	/** The handle of the `Blog`. */
+	handle?: string | undefined | null,	/** The ID of the `Blog`. */
+	id?: string | undefined | null},ResolverInputTypes["Blog"]],
 blogByHandle?: [{	/** The handle of the blog. */
 	handle: string},ResolverInputTypes["Blog"]],
 blogs?: [{	/** Returns up to the first `n` elements from the list. */
@@ -7806,18 +9628,20 @@ blogs?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["BlogSortKeys"] | undefined | null,	/** Supported filter parameters:
- - `created_at`
- - `handle`
- - `title`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ResolverInputTypes["BlogSortKeys"] | undefined | null,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| created_at |
+| handle |
+| title |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null},ResolverInputTypes["BlogConnection"]],
 cart?: [{	/** The ID of the cart. */
 	id: string},ResolverInputTypes["Cart"]],
+cartCompletionAttempt?: [{	/** The ID of the attempt. */
+	attemptId: string},ResolverInputTypes["CartCompletionAttemptResult"]],
 collection?: [{	/** The ID of the `Collection`. */
 	id?: string | undefined | null,	/** The handle of the `Collection`. */
 	handle?: string | undefined | null},ResolverInputTypes["Collection"]],
@@ -7829,13 +9653,13 @@ collections?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["CollectionSortKeys"] | undefined | null,	/** Supported filter parameters:
- - `collection_type`
- - `title`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ResolverInputTypes["CollectionSortKeys"] | undefined | null,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| collection_type |
+| title |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null},ResolverInputTypes["CollectionConnection"]],
 customer?: [{	/** The customer access token. */
@@ -7850,7 +9674,7 @@ locations?: [{	/** Returns up to the first `n` elements from the list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
 	sortKey?: ResolverInputTypes["LocationSortKeys"] | undefined | null,	/** Used to sort results based on proximity to the provided location. */
 	near?: ResolverInputTypes["GeoCoordinateInput"] | undefined | null},ResolverInputTypes["LocationConnection"]],
-menu?: [{	/** Returns a storefront menu by the specified handle. */
+menu?: [{	/** The navigation menu's handle. */
 	handle: string},ResolverInputTypes["Menu"]],
 metaobject?: [{	/** The ID of the metaobject. */
 	id?: string | undefined | null,	/** The handle and type of the metaobject. */
@@ -7865,11 +9689,13 @@ metaobjects?: [{	/** The type of metaobject to retrieve. */
 	reverse?: boolean | undefined | null},ResolverInputTypes["MetaobjectConnection"]],
 node?: [{	/** The ID of the Node to return. */
 	id: string},ResolverInputTypes["Node"]],
-nodes?: [{	/** The IDs of the Nodes to return. */
+nodes?: [{	/** The IDs of the Nodes to return.
+
+The input must not contain more than `250` values. */
 	ids: Array<string>},ResolverInputTypes["Node"]],
-page?: [{	/** The ID of the `Page`. */
-	id?: string | undefined | null,	/** The handle of the `Page`. */
-	handle?: string | undefined | null},ResolverInputTypes["Page"]],
+page?: [{	/** The handle of the `Page`. */
+	handle?: string | undefined | null,	/** The ID of the `Page`. */
+	id?: string | undefined | null},ResolverInputTypes["Page"]],
 pageByHandle?: [{	/** The handle of the page. */
 	handle: string},ResolverInputTypes["Page"]],
 pages?: [{	/** Returns up to the first `n` elements from the list. */
@@ -7878,23 +9704,38 @@ pages?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["PageSortKeys"] | undefined | null,	/** Supported filter parameters:
- - `created_at`
- - `handle`
- - `title`
- - `updated_at`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ResolverInputTypes["PageSortKeys"] | undefined | null,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| created_at |
+| handle |
+| title |
+| updated_at |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null},ResolverInputTypes["PageConnection"]],
+predictiveSearch?: [{	/** Limits the number of results based on `limit_scope`. The value can range from 1 to 10, and the default is 10. */
+	limit?: number | undefined | null,	/** Decides the distribution of results. */
+	limitScope?: ResolverInputTypes["PredictiveSearchLimitScope"] | undefined | null,	/** The search query. */
+	query: string,	/** Specifies the list of resource fields to use for search. The default fields searched on are TITLE, PRODUCT_TYPE, VARIANT_TITLE, and VENDOR. For the best search experience, you should search on the default field set.
+
+The input must not contain more than `250` values. */
+	searchableFields?: Array<ResolverInputTypes["SearchableField"]> | undefined | null,	/** The types of resources to search for.
+
+The input must not contain more than `250` values. */
+	types?: Array<ResolverInputTypes["PredictiveSearchType"]> | undefined | null,	/** Specifies how unavailable products are displayed in the search results. */
+	unavailableProducts?: ResolverInputTypes["SearchUnavailableProductsType"] | undefined | null},ResolverInputTypes["PredictiveSearchResult"]],
 product?: [{	/** The ID of the `Product`. */
 	id?: string | undefined | null,	/** The handle of the `Product`. */
 	handle?: string | undefined | null},ResolverInputTypes["Product"]],
-productByHandle?: [{	/** A unique string that identifies the product. Handles are automatically generated based on the product's title, and are always lowercase. Whitespace and special characters are replaced with a hyphen: `-`. If there are multiple consecutive whitespace or special characters, then they're replaced with a single hyphen. Whitespace or special characters at the beginning are removed. If a duplicate product title is used, then the handle is auto-incremented by one. For example, if you had two products called `Potion`, then their handles would be `potion` and `potion-1`. After a product has been created, changing the product title doesn't update the handle. */
+productByHandle?: [{	/** A unique, human-readable string of the product's title.
+A handle can contain letters, hyphens (`-`), and numbers, but no spaces.
+The handle is used in the online store URL for the product.
+ */
 	handle: string},ResolverInputTypes["Product"]],
 productRecommendations?: [{	/** The id of the product. */
-	productId: string},ResolverInputTypes["Product"]],
+	productId: string,	/** The recommendation intent that is used to generate product recommendations. You can use intent to generate product recommendations on various pages across the channels, according to different strategies. */
+	intent?: ResolverInputTypes["ProductRecommendationIntent"] | undefined | null},ResolverInputTypes["Product"]],
 productTags?: [{	/** Returns up to the first `n` elements from the list. */
 	first: number},ResolverInputTypes["StringConnection"]],
 productTypes?: [{	/** Returns up to the first `n` elements from the list. */
@@ -7905,23 +9746,39 @@ products?: [{	/** Returns up to the first `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
 	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
-	sortKey?: ResolverInputTypes["ProductSortKeys"] | undefined | null,	/** Supported filter parameters:
- - `available_for_sale`
- - `created_at`
- - `product_type`
- - `tag`
- - `tag_not`
- - `title`
- - `updated_at`
- - `variants.price`
- - `vendor`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	sortKey?: ResolverInputTypes["ProductSortKeys"] | undefined | null,	/** You can apply one or multiple filters to a query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| available_for_sale | Filter by products that have at least one product variant available for sale. |
+| created_at | Filter by the date and time when the product was created. | | | - `created_at:>'2020-10-21T23:39:20Z'`<br/> - `created_at:<now`<br/> - `created_at:<=2024` |
+| product_type | Filter by a comma-separated list of [product types](https://help.shopify.com/en/manual/products/details/product-type). | | | `product_type:snowboard` |
+| tag | Filter products by the product [`tags`](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-tags) field. | | | `tag:my_tag` |
+| tag_not | Filter by products that don't have the specified product [tags](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-tags). | | | `tag_not:my_tag` |
+| title | Filter by the product [`title`](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-title) field. | | | `title:The Minimal Snowboard` |
+| updated_at | Filter by the date and time when the product was last updated. | | | - `updated_at:>'2020-10-21T23:39:20Z'`<br/> - `updated_at:<now`<br/> - `updated_at:<=2024` |
+| variants.price | Filter by the price of the product's variants. |
+| vendor | Filter by the product [`vendor`](https://shopify.dev/docs/api/storefront/latest/objects/Product#field-vendor) field. | | | - `vendor:Snowdevil`<br/> - `vendor:Snowdevil OR vendor:Icedevil` |
+Learn more about [Shopify API search syntax](https://shopify.dev/api/usage/search-syntax).
  */
 	query?: string | undefined | null},ResolverInputTypes["ProductConnection"]],
 	/** The list of public Storefront API versions, including supported, release candidate and unstable versions. */
 	publicApiVersions?:ResolverInputTypes["ApiVersion"],
+search?: [{	/** Returns up to the first `n` elements from the list. */
+	first?: number | undefined | null,	/** Returns the elements that come after the specified cursor. */
+	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
+	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
+	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
+	reverse?: boolean | undefined | null,	/** Sort the underlying list by the given key. */
+	sortKey?: ResolverInputTypes["SearchSortKeys"] | undefined | null,	/** The search query. */
+	query: string,	/** Specifies whether to perform a partial word match on the last search term. */
+	prefix?: ResolverInputTypes["SearchPrefixQueryType"] | undefined | null,	/** Returns a subset of products matching all product filters.
+
+The input must not contain more than `250` values. */
+	productFilters?: Array<ResolverInputTypes["ProductFilter"]> | undefined | null,	/** The types of resources to search for.
+
+The input must not contain more than `250` values. */
+	types?: Array<ResolverInputTypes["SearchType"]> | undefined | null,	/** Specifies how unavailable products or variants are displayed in the search results. */
+	unavailableProducts?: ResolverInputTypes["SearchUnavailableProductsType"] | undefined | null},ResolverInputTypes["SearchResultItemConnection"]],
 	/** The shop associated with the storefront access token. */
 	shop?:ResolverInputTypes["Shop"],
 urlRedirects?: [{	/** Returns up to the first `n` elements from the list. */
@@ -7929,13 +9786,13 @@ urlRedirects?: [{	/** Returns up to the first `n` elements from the list. */
 	after?: string | undefined | null,	/** Returns up to the last `n` elements from the list. */
 	last?: number | undefined | null,	/** Returns the elements that come before the specified cursor. */
 	before?: string | undefined | null,	/** Reverse the order of the underlying list. */
-	reverse?: boolean | undefined | null,	/** Supported filter parameters:
- - `created_at`
- - `path`
- - `target`
-
-See the detailed [search syntax](https://shopify.dev/api/usage/search-syntax)
-for more information about using filters.
+	reverse?: boolean | undefined | null,	/** Apply one or multiple filters to the query.
+| name | description | acceptable_values | default_value | example_use |
+| ---- | ---- | ---- | ---- | ---- |
+| created_at |
+| path |
+| target |
+Refer to the detailed [search syntax](https://shopify.dev/api/usage/search-syntax) for more information about using filters.
  */
 	query?: string | undefined | null},ResolverInputTypes["UrlRedirectConnection"]],
 		__typename?: boolean | `@${string}`
@@ -7964,6 +9821,58 @@ was created by a Shopify Script.
 	value?:ResolverInputTypes["PricingValue"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** Specifies whether to perform a partial word match on the last search term. */
+["SearchPrefixQueryType"]:SearchPrefixQueryType;
+	/** A search query suggestion. */
+["SearchQuerySuggestion"]: AliasType<{
+	/** The text of the search query suggestion with highlighted HTML tags. */
+	styledText?:boolean | `@${string}`,
+	/** The text of the search query suggestion. */
+	text?:boolean | `@${string}`,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** A search result that matches the search query.
+ */
+["SearchResultItem"]: AliasType<{
+	Article?:ResolverInputTypes["Article"],
+	Page?:ResolverInputTypes["Page"],
+	Product?:ResolverInputTypes["Product"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type for paginating through multiple SearchResultItems.
+ */
+["SearchResultItemConnection"]: AliasType<{
+	/** A list of edges. */
+	edges?:ResolverInputTypes["SearchResultItemEdge"],
+	/** A list of the nodes contained in SearchResultItemEdge. */
+	nodes?:ResolverInputTypes["SearchResultItem"],
+	/** Information to aid in pagination. */
+	pageInfo?:ResolverInputTypes["PageInfo"],
+	/** A list of available filters. */
+	productFilters?:ResolverInputTypes["Filter"],
+	/** The total number of results. */
+	totalCount?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** An auto-generated type which holds one SearchResultItem and a cursor during pagination.
+ */
+["SearchResultItemEdge"]: AliasType<{
+	/** A cursor for use in pagination. */
+	cursor?:boolean | `@${string}`,
+	/** The item at the end of SearchResultItemEdge. */
+	node?:ResolverInputTypes["SearchResultItem"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** The set of valid sort keys for the search query. */
+["SearchSortKeys"]:SearchSortKeys;
+	/** The types of search items to perform search within. */
+["SearchType"]:SearchType;
+	/** Specifies whether to display results for unavailable products. */
+["SearchUnavailableProductsType"]:SearchUnavailableProductsType;
+	/** Specifies the list of resource fields to search. */
+["SearchableField"]:SearchableField;
 	/** Properties used by customers to select a product variant.
 Products can have multiple options, like different sizes or colors.
  */
@@ -7974,7 +9883,7 @@ Products can have multiple options, like different sizes or colors.
 	value?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** Specifies the input fields required for a selected option. */
+	/** The input fields required for a selected option. */
 ["SelectedOptionInput"]: {
 	/** The product option’s name. */
 	name: string,
@@ -7987,7 +9896,7 @@ Products can have multiple options, like different sizes or colors.
 	checkoutCharge?:ResolverInputTypes["SellingPlanCheckoutCharge"],
 	/** The description of the selling plan. */
 	description?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The name of the selling plan. For example, '6 weeks of prepaid granola, delivered weekly'. */
 	name?:boolean | `@${string}`,
@@ -8190,12 +10099,14 @@ Individual selling plans contribute their options to the associated selling plan
 	brand?:ResolverInputTypes["Brand"],
 	/** A description of the shop. */
 	description?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
-metafield?: [{	/** A container for a set of metafields. */
-	namespace: string,	/** The identifier for the metafield. */
+metafield?: [{	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined | null,	/** The identifier for the metafield. */
 	key: string},ResolverInputTypes["Metafield"]],
-metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
+metafields?: [{	/** The list of metafields to retrieve by namespace and key.
+
+The input must not contain more than `250` values. */
 	identifiers: Array<ResolverInputTypes["HasMetafieldsIdentifier"]>},ResolverInputTypes["Metafield"]],
 	/** A string representing the way currency is formatted when the currency isn’t specified. */
 	moneyFormat?:boolean | `@${string}`,
@@ -8219,13 +10130,21 @@ metafields?: [{	/** The list of metafields to retrieve by namespace and key. */
 	termsOfService?:ResolverInputTypes["ShopPolicy"],
 		__typename?: boolean | `@${string}`
 }>;
+	/** The input fields for submitting Shop Pay payment method information for checkout.
+ */
+["ShopPayWalletContentInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ResolverInputTypes["MailingAddressInput"],
+	/** Session token for transaction. */
+	sessionToken: string
+};
 	/** Policy that a merchant has configured for their store, such as their refund or privacy policy. */
 ["ShopPolicy"]: AliasType<{
 	/** Policy text, maximum size of 64kb. */
 	body?:boolean | `@${string}`,
 	/** Policy’s handle. */
 	handle?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** Policy’s title. */
 	title?:boolean | `@${string}`,
@@ -8242,7 +10161,7 @@ Otherwise, the policy will return the merchant-configured value.
 	body?:boolean | `@${string}`,
 	/** The handle of the policy. */
 	handle?:boolean | `@${string}`,
-	/** The unique identifier of the policy. A default policy doesn't have an ID. */
+	/** The unique ID of the policy. A default policy doesn't have an ID. */
 	id?:boolean | `@${string}`,
 	/** The title of the policy. */
 	title?:boolean | `@${string}`,
@@ -8260,6 +10179,8 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	location?:ResolverInputTypes["Location"],
 	/** Returns the estimated amount of time it takes for pickup to be ready (Example: Usually ready in 24 hours). */
 	pickUpTime?:boolean | `@${string}`,
+	/** The quantity of the product variant in-stock at this location. */
+	quantityAvailable?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
 	/** An auto-generated type for paginating through multiple StoreAvailabilities.
@@ -8282,7 +10203,7 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	node?:ResolverInputTypes["StoreAvailability"],
 		__typename?: boolean | `@${string}`
 }>;
-	/** An auto-generated type for paginating through a list of Strings.
+	/** An auto-generated type for paginating through multiple Strings.
  */
 ["StringConnection"]: AliasType<{
 	/** A list of edges. */
@@ -8300,6 +10221,53 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	node?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
+	/** An error that occurred during cart submit for completion. */
+["SubmissionError"]: AliasType<{
+	/** The error code. */
+	code?:boolean | `@${string}`,
+	/** The error message. */
+	message?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** The code of the error that occurred during cart submit for completion. */
+["SubmissionErrorCode"]:SubmissionErrorCode;
+	/** Cart submit for checkout completion is successful. */
+["SubmitAlreadyAccepted"]: AliasType<{
+	/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Cart submit for checkout completion failed. */
+["SubmitFailed"]: AliasType<{
+	/** The URL of the checkout for the cart. */
+	checkoutUrl?:boolean | `@${string}`,
+	/** The list of errors that occurred from executing the mutation. */
+	errors?:ResolverInputTypes["SubmissionError"],
+		__typename?: boolean | `@${string}`
+}>;
+	/** Cart submit for checkout completion is already accepted. */
+["SubmitSuccess"]: AliasType<{
+	/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Cart submit for checkout completion is throttled. */
+["SubmitThrottled"]: AliasType<{
+	/** UTC date time string that indicates the time after which clients should make their next
+poll request. Any poll requests sent before this time will be ignored. Use this value to schedule the
+next poll request.
+ */
+	pollAfter?:boolean | `@${string}`,
+		__typename?: boolean | `@${string}`
+}>;
+	/** Color and image for visual representation. */
+["Swatch"]: AliasType<{
+	/** The swatch color. */
+	color?:boolean | `@${string}`,
+	/** The swatch image. */
+	image?:ResolverInputTypes["MediaImage"],
+		__typename?: boolean | `@${string}`
+}>;
 	/** Specifies the fields required to complete a checkout with
 a tokenized payment.
  */
@@ -8312,13 +10280,24 @@ a tokenized payment.
 	billingAddress: ResolverInputTypes["MailingAddressInput"],
 	/** A simple string or JSON containing the required payment data for the tokenized payment. */
 	paymentData: string,
-	/** Whether to execute the payment in test mode, if possible. Test mode is not supported in production stores. Defaults to `false`. */
+	/** Whether to execute the payment in test mode, if possible. Test mode isn't supported in production stores. Defaults to `false`. */
 	test?: boolean | undefined | null,
 	/** Public Hash Key used for AndroidPay payments only. */
 	identifier?: string | undefined | null,
 	/** The type of payment token. */
 	type: ResolverInputTypes["PaymentTokenType"]
 };
+	/** Represents a resource that you can track the origin of the search traffic. */
+["Trackable"]:AliasType<{
+		/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?:boolean | `@${string}`;
+		['...on Article']?: Omit<ResolverInputTypes["Article"],keyof ResolverInputTypes["Trackable"]>;
+		['...on Collection']?: Omit<ResolverInputTypes["Collection"],keyof ResolverInputTypes["Trackable"]>;
+		['...on Page']?: Omit<ResolverInputTypes["Page"],keyof ResolverInputTypes["Trackable"]>;
+		['...on Product']?: Omit<ResolverInputTypes["Product"],keyof ResolverInputTypes["Trackable"]>;
+		['...on SearchQuerySuggestion']?: Omit<ResolverInputTypes["SearchQuerySuggestion"],keyof ResolverInputTypes["Trackable"]>;
+		__typename?: boolean | `@${string}`
+}>;
 	/** An object representing exchange of money for a product or service. */
 ["Transaction"]: AliasType<{
 	/** The amount of money that the transaction was for. */
@@ -8342,8 +10321,8 @@ a tokenized payment.
 	/** Represents an [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986) and
 [RFC 3987](https://datatracker.ietf.org/doc/html/rfc3987)-compliant URI string.
 
-For example, `"https://johns-apparel.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
-(`johns-apparel.myshopify.com`).
+For example, `"https://example.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
+(`example.myshopify.com`).
  */
 ["URL"]:unknown;
 	/** The measurement used to calculate a unit price for a product variant (e.g. $9.99 / 100ml).
@@ -8410,7 +10389,7 @@ Example value: `"50"`.
 	message?:boolean | `@${string}`,
 		__typename?: boolean | `@${string}`
 }>;
-	/** A filter used to view a subset of products in a collection matching a specific variant option. */
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific variant option. */
 ["VariantOptionFilter"]: {
 	/** The name of the variant option to filter on. */
 	name: string,
@@ -8421,10 +10400,12 @@ Example value: `"50"`.
 ["Video"]: AliasType<{
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?:boolean | `@${string}`,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id?:boolean | `@${string}`,
 	/** The media content type. */
 	mediaContentType?:boolean | `@${string}`,
+	/** The presentation for a media. */
+	presentation?:ResolverInputTypes["MediaPresentation"],
 	/** The preview image for the media. */
 	previewImage?:ResolverInputTypes["Image"],
 	/** The sources for a video. */
@@ -8450,7 +10431,11 @@ Example value: `"50"`.
   }
 
 export type ModelTypes = {
-    /** A version of the API, as defined by [Shopify API versioning](https://shopify.dev/api/usage/versioning).
+    ["schema"]: {
+	query?: ModelTypes["QueryRoot"] | undefined,
+	mutation?: ModelTypes["Mutation"] | undefined
+};
+	/** A version of the API, as defined by [Shopify API versioning](https://shopify.dev/api/usage/versioning).
 Versions are commonly referred to by their handle (for example, `2021-10`).
  */
 ["ApiVersion"]: {
@@ -8460,6 +10445,34 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	handle: string,
 	/** Whether the version is actively supported by Shopify. Supported API versions are guaranteed to be stable. Unsupported API versions include unstable, release candidate, and end-of-life versions that are marked as unsupported. For more information, refer to [Versioning](https://shopify.dev/api/usage/versioning). */
 	supported: boolean
+};
+	/** The input fields for submitting Apple Pay payment method information for checkout.
+ */
+["ApplePayWalletContentInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ModelTypes["MailingAddressInput"],
+	/** The data for the Apple Pay wallet. */
+	data: string,
+	/** The header data for the Apple Pay wallet. */
+	header: ModelTypes["ApplePayWalletHeaderInput"],
+	/** The last digits of the card used to create the payment. */
+	lastDigits?: string | undefined,
+	/** The signature for the Apple Pay wallet. */
+	signature: string,
+	/** The version for the Apple Pay wallet. */
+	version: string
+};
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["ApplePayWalletHeaderInput"]: {
+	/** The application data for the Apple Pay wallet. */
+	applicationData?: string | undefined,
+	/** The ephemeral public key for the Apple Pay wallet. */
+	ephemeralPublicKey: string,
+	/** The public key hash for the Apple Pay wallet. */
+	publicKeyHash: string,
+	/** The transaction ID for the Apple Pay wallet. */
+	transactionId: string
 };
 	/** Details about the gift card used on the checkout. */
 ["AppliedGiftCard"]: {
@@ -8471,7 +10484,7 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	balance: ModelTypes["MoneyV2"],
 	/** The amount left on the gift card. */
 	balanceV2: ModelTypes["MoneyV2"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The last characters of the gift card. */
 	lastCharacters: string,
@@ -8496,17 +10509,15 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	excerpt?: string | undefined,
 	/** The excerpt of the article, complete with HTML formatting. */
 	excerptHtml?: ModelTypes["HTML"] | undefined,
-	/** A human-friendly unique string for the Article automatically generated from its title.
- */
+	/** A human-friendly unique string for the Article automatically generated from its title. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The image associated with the article. */
 	image?: ModelTypes["Image"] | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: ModelTypes["URL"] | undefined,
@@ -8514,10 +10525,13 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	publishedAt: ModelTypes["DateTime"],
 	/** The article’s SEO information. */
 	seo?: ModelTypes["SEO"] | undefined,
-	/** A categorization that a article can be tagged with. */
+	/** A categorization that a article can be tagged with.
+ */
 	tags: Array<string>,
 	/** The article’s name. */
-	title: string
+	title: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined
 };
 	/** The author of an article. */
 ["ArticleAuthor"]: {
@@ -8551,14 +10565,16 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	node: ModelTypes["Article"]
 };
 	["ArticleSortKeys"]:ArticleSortKeys;
-	/** Represents a generic custom attribute. */
+	/** Represents a generic custom attribute, such as whether an order is a customer's first. */
 ["Attribute"]: {
-		/** Key or name of the attribute. */
+		/** The key or name of the attribute. For example, `"customersFirstOrder"`.
+ */
 	key: string,
-	/** Value of the attribute. */
+	/** The value of the attribute. For example, `"true"`.
+ */
 	value?: string | undefined
 };
-	/** Specifies the input fields required for an attribute. */
+	/** The input fields for an attribute. */
 ["AttributeInput"]: {
 	/** Key or name of the attribute. */
 	key: string,
@@ -8589,6 +10605,26 @@ This field should be polled until its value becomes `true`.
 	/** The fetched shipping rates. `null` until the `ready` field is `true`. */
 	shippingRates?: Array<ModelTypes["ShippingRate"]> | undefined
 };
+	/** Represents a cart line common fields. */
+["BaseCartLine"]: ModelTypes["CartLine"] | ModelTypes["ComponentizableCartLine"];
+	/** An auto-generated type for paginating through multiple BaseCartLines.
+ */
+["BaseCartLineConnection"]: {
+		/** A list of edges. */
+	edges: Array<ModelTypes["BaseCartLineEdge"]>,
+	/** A list of the nodes contained in BaseCartLineEdge. */
+	nodes: Array<ModelTypes["BaseCartLine"]>,
+	/** Information to aid in pagination. */
+	pageInfo: ModelTypes["PageInfo"]
+};
+	/** An auto-generated type which holds one BaseCartLine and a cursor during pagination.
+ */
+["BaseCartLineEdge"]: {
+		/** A cursor for use in pagination. */
+	cursor: string,
+	/** The item at the end of BaseCartLineEdge. */
+	node: ModelTypes["BaseCartLine"]
+};
 	/** An online store blog. */
 ["Blog"]: {
 		/** Find an article by its handle. */
@@ -8600,12 +10636,11 @@ This field should be polled until its value becomes `true`.
 	/** A human-friendly unique string for the Blog automatically generated from its title.
  */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: ModelTypes["URL"] | undefined,
@@ -8633,7 +10668,7 @@ This field should be polled until its value becomes `true`.
 	node: ModelTypes["Blog"]
 };
 	["BlogSortKeys"]:BlogSortKeys;
-	/** The store's branding configuration.
+	/** The store's [branding configuration](https://help.shopify.com/en/manual/promoting-marketing/managing-brand-assets).
  */
 ["Brand"]: {
 		/** The colors of the store's brand. */
@@ -8665,6 +10700,14 @@ This field should be polled until its value becomes `true`.
 	/** The shop's secondary brand colors. */
 	secondary: Array<ModelTypes["BrandColorGroup"]>
 };
+	/** The input fields for obtaining the buyer's identity.
+ */
+["BuyerInput"]: {
+	/** The customer access token retrieved from the [Customer Accounts API](https://shopify.dev/docs/api/customer#step-obtain-access-token). */
+	customerAccessToken: string,
+	/** The identifier of the company location. */
+	companyLocationId?: string | undefined
+};
 	["CardBrand"]:CardBrand;
 	/** A cart represents the merchandise that a buyer intends to purchase,
 and the estimated cost associated with the cart. Learn how to
@@ -8676,7 +10719,7 @@ during a customer's session.
 	attribute?: ModelTypes["Attribute"] | undefined,
 	/** The attributes associated with the cart. Attributes are represented as key-value pairs. */
 	attributes: Array<ModelTypes["Attribute"]>,
-	/** Information about the buyer that is interacting with the cart. */
+	/** Information about the buyer that's interacting with the cart. */
 	buyerIdentity: ModelTypes["CartBuyerIdentity"],
 	/** The URL of the checkout for the cart. */
 	checkoutUrl: ModelTypes["URL"],
@@ -8690,20 +10733,19 @@ delivery address preference or the default address of the logged-in customer.
 	deliveryGroups: ModelTypes["CartDeliveryGroupConnection"],
 	/** The discounts that have been applied to the entire cart. */
 	discountAllocations: Array<ModelTypes["CartDiscountAllocation"]>,
-	/** The case-insensitive discount codes that the customer added at checkout.
- */
+	/** The case-insensitive discount codes that the customer added at checkout. */
 	discountCodes: Array<ModelTypes["CartDiscountCode"]>,
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated costs are subject to change and changes will be reflected at checkout.
-The `estimatedCost` field uses the `buyerIdentity` field to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated costs are subject to change and changes will be reflected at checkout. The `estimatedCost` field uses the `buyerIdentity` field to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 	estimatedCost: ModelTypes["CartEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** A list of lines containing information about the items the customer intends to purchase. */
-	lines: ModelTypes["CartLineConnection"],
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	lines: ModelTypes["BaseCartLineConnection"],
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: ModelTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<ModelTypes["Metafield"] | undefined>,
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer. */
 	note?: string | undefined,
 	/** The total number of items in the cart. */
 	totalQuantity: number,
@@ -8733,12 +10775,28 @@ The `estimatedCost` field uses the `buyerIdentity` field to determine
 	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
 The rank of the preferences is determined by the order of the addresses in the array. Preferences
 can be used to populate relevant fields in the checkout flow.
+
+As of the `2025-01` release, `buyerIdentity.deliveryAddressPreferences` is deprecated.
+Delivery addresses are now part of the `CartDelivery` object and managed with three new mutations:
+- `cartDeliveryAddressAdd`
+- `cartDeliveryAddressUpdate`
+- `cartDeliveryAddressDelete`
  */
 	deliveryAddressPreferences: Array<ModelTypes["DeliveryAddress"]>,
-	/** The email address of the buyer that is interacting with the cart. */
+	/** The email address of the buyer that's interacting with the cart. */
 	email?: string | undefined,
-	/** The phone number of the buyer that is interacting with the cart. */
-	phone?: string | undefined
+	/** The phone number of the buyer that's interacting with the cart. */
+	phone?: string | undefined,
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
+ */
+	preferences?: ModelTypes["CartPreferences"] | undefined,
+	/** The purchasing company associated with the cart. */
+	purchasingCompany?: ModelTypes["PurchasingCompany"] | undefined,
+	/** A set of wallet preferences tied to the buyer that is interacting with the cart.
+Preferences can be used to populate relevant payment fields in the checkout flow.
+ */
+	walletPreferences: Array<string>
 };
 	/** Specifies the input fields to update the buyer information associated with a cart.
 Buyer identity is used to determine
@@ -8750,15 +10808,16 @@ and should match the customer's shipping address.
 	email?: string | undefined,
 	/** The phone number of the buyer that is interacting with the cart. */
 	phone?: string | undefined,
+	/** The company location of the buyer that is interacting with the cart. */
+	companyLocationId?: string | undefined,
 	/** The country where the buyer is located. */
 	countryCode?: ModelTypes["CountryCode"] | undefined,
 	/** The access token used to identify the customer associated with the cart. */
 	customerAccessToken?: string | undefined,
-	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
-The rank of the preferences is determined by the order of the addresses in the array. Preferences
-can be used to populate relevant fields in the checkout flow.
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
  */
-	deliveryAddressPreferences?: Array<ModelTypes["DeliveryAddressInput"]> | undefined
+	preferences?: ModelTypes["CartPreferencesInput"] | undefined
 };
 	/** Return type for `cartBuyerIdentityUpdate` mutation. */
 ["CartBuyerIdentityUpdatePayload"]: {
@@ -8767,12 +10826,49 @@ can be used to populate relevant fields in the checkout flow.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["CartUserError"]>
 };
+	["CartCardSource"]:CartCardSource;
 	/** The discount that has been applied to the cart line using a discount code. */
 ["CartCodeDiscountAllocation"]: {
 		/** The code used to apply the discount. */
 	code: string,
 	/** The discounted amount that has been applied to the cart line. */
 	discountedAmount: ModelTypes["MoneyV2"]
+};
+	/** The completion action to checkout a cart. */
+["CartCompletionAction"]:ModelTypes["CompletePaymentChallenge"];
+	/** The required completion action to checkout a cart. */
+["CartCompletionActionRequired"]: {
+		/** The action required to complete the cart completion attempt. */
+	action?: ModelTypes["CartCompletionAction"] | undefined,
+	/** The ID of the cart completion attempt. */
+	id: string
+};
+	/** The result of a cart completion attempt. */
+["CartCompletionAttemptResult"]:ModelTypes["CartCompletionActionRequired"] | ModelTypes["CartCompletionFailed"] | ModelTypes["CartCompletionProcessing"] | ModelTypes["CartCompletionSuccess"];
+	/** A failed completion to checkout a cart. */
+["CartCompletionFailed"]: {
+		/** The errors that caused the checkout to fail. */
+	errors: Array<ModelTypes["CompletionError"]>,
+	/** The ID of the cart completion attempt. */
+	id: string
+};
+	/** A cart checkout completion that's still processing. */
+["CartCompletionProcessing"]: {
+		/** The ID of the cart completion attempt. */
+	id: string,
+	/** The number of milliseconds to wait before polling again. */
+	pollDelay: number
+};
+	/** A successful completion to checkout a cart and a created order. */
+["CartCompletionSuccess"]: {
+		/** The date and time when the job completed. */
+	completedAt?: ModelTypes["DateTime"] | undefined,
+	/** The ID of the cart completion attempt. */
+	id: string,
+	/** The ID of the order that's created in Shopify. */
+	orderId: string,
+	/** The URL of the order confirmation in Shopify. */
+	orderUrl: ModelTypes["URL"]
 };
 	/** The costs that the buyer will pay at checkout.
 The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity) to determine
@@ -8812,14 +10908,40 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	/** The title of the allocated discount. */
 	title: string
 };
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreference"]: {
+		/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode: ModelTypes["CountryCode"],
+	/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude: number,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude: number
+};
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreferenceInput"]: {
+	/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude: number,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude: number,
+	/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode: ModelTypes["CountryCode"]
+};
 	/** Information about the options available for one or more line items to be delivered to a specific address. */
 ["CartDeliveryGroup"]: {
 		/** A list of cart lines for the delivery group. */
-	cartLines: ModelTypes["CartLineConnection"],
+	cartLines: ModelTypes["BaseCartLineConnection"],
 	/** The destination address for the delivery group. */
 	deliveryAddress: ModelTypes["MailingAddress"],
 	/** The delivery options available for the delivery group. */
 	deliveryOptions: Array<ModelTypes["CartDeliveryOption"]>,
+	/** The type of merchandise in the delivery group. */
+	groupType: ModelTypes["CartDeliveryGroupType"],
 	/** The ID for the delivery group. */
 	id: string,
 	/** The selected delivery option for the delivery group. */
@@ -8843,6 +10965,7 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	/** The item at the end of CartDeliveryGroupEdge. */
 	node: ModelTypes["CartDeliveryGroup"]
 };
+	["CartDeliveryGroupType"]:CartDeliveryGroupType;
 	/** Information about a delivery option. */
 ["CartDeliveryOption"]: {
 		/** The code of the delivery option. */
@@ -8857,6 +10980,43 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	handle: string,
 	/** The title of the delivery option. */
 	title?: string | undefined
+};
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartDeliveryPreference"]: {
+		/** Preferred location used to find the closest pick up point based on coordinates. */
+	coordinates?: ModelTypes["CartDeliveryCoordinatesPreference"] | undefined,
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+	deliveryMethod: Array<ModelTypes["PreferenceDeliveryMethodType"]>,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+ */
+	pickupHandle: Array<string>
+};
+	/** Delivery preferences can be used to prefill the delivery section at checkout. */
+["CartDeliveryPreferenceInput"]: {
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points.
+
+The input must not contain more than `250` values. */
+	deliveryMethod?: Array<ModelTypes["PreferenceDeliveryMethodType"]> | undefined,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+
+The input must not contain more than `250` values. */
+	pickupHandle?: Array<string> | undefined,
+	/** The coordinates of a delivery location in order of preference. */
+	coordinates?: ModelTypes["CartDeliveryCoordinatesPreferenceInput"] | undefined
+};
+	/** The input fields for submitting direct payment method information for checkout.
+ */
+["CartDirectPaymentMethodInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ModelTypes["MailingAddressInput"],
+	/** The session ID for the direct payment method used to create the payment. */
+	sessionId: string,
+	/** The source of the credit card payment. */
+	cardSource?: ModelTypes["CartCardSource"] | undefined
 };
 	/** The discounts that have been applied to the cart line. */
 ["CartDiscountAllocation"]: ModelTypes["CartAutomaticDiscountAllocation"] | ModelTypes["CartCodeDiscountAllocation"] | ModelTypes["CartCustomDiscountAllocation"];
@@ -8875,12 +11035,7 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	userErrors: Array<ModelTypes["CartUserError"]>
 };
 	["CartErrorCode"]:CartErrorCode;
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated cost uses
-[`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity)
-to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity) to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 ["CartEstimatedCost"]: {
 		/** The estimated amount, before taxes and discounts, for the customer to pay at checkout. The checkout charge amount doesn't include any deferred payments that'll be paid at a later date. If the cart has no deferred payments, then the checkout charge amount is equivalent to`subtotal_amount`. */
 	checkoutChargeAmount: ModelTypes["MoneyV2"],
@@ -8893,22 +11048,50 @@ to determine
 	/** The estimated tax amount for the customer to pay at checkout. */
 	totalTaxAmount?: ModelTypes["MoneyV2"] | undefined
 };
-	/** Specifies the input fields to create a cart. */
+	/** The input fields for submitting a billing address without a selected payment method.
+ */
+["CartFreePaymentMethodInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ModelTypes["MailingAddressInput"]
+};
+	/** The input fields to create a cart. */
 ["CartInput"]: {
-	/** An array of key-value pairs that contains additional information about the cart. */
+	/** An array of key-value pairs that contains additional information about the cart.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ModelTypes["AttributeInput"]> | undefined,
-	/** A list of merchandise lines to add to the cart. */
+	/** A list of merchandise lines to add to the cart.
+
+The input must not contain more than `250` values. */
 	lines?: Array<ModelTypes["CartLineInput"]> | undefined,
 	/** The case-insensitive discount codes that the customer added at checkout.
- */
+
+The input must not contain more than `250` values. */
 	discountCodes?: Array<string> | undefined,
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer.
+ */
 	note?: string | undefined,
 	/** The customer associated with the cart. Used to determine [international pricing]
 (https://shopify.dev/custom-storefronts/internationalization/international-pricing).
 Buyer identity should match the customer's shipping address.
  */
-	buyerIdentity?: ModelTypes["CartBuyerIdentityInput"] | undefined
+	buyerIdentity?: ModelTypes["CartBuyerIdentityInput"] | undefined,
+	/** The metafields to associate with this cart.
+
+The input must not contain more than `250` values. */
+	metafields?: Array<ModelTypes["CartInputMetafieldInput"]> | undefined
+};
+	/** The input fields for a cart metafield value to set. */
+["CartInputMetafieldInput"]: {
+	/** The key name of the metafield. */
+	key: string,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string
 };
 	/** Represents information about the merchandise in the cart. */
 ["CartLine"]: {
@@ -8922,7 +11105,7 @@ Buyer identity should match the customer's shipping address.
 	discountAllocations: Array<ModelTypes["CartDiscountAllocation"]>,
 	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
 	estimatedCost: ModelTypes["CartLineEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The merchandise that the buyer intends to purchase. */
 	merchandise: ModelTypes["Merchandise"],
@@ -8930,16 +11113,6 @@ Buyer identity should match the customer's shipping address.
 	quantity: number,
 	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
 	sellingPlanAllocation?: ModelTypes["SellingPlanAllocation"] | undefined
-};
-	/** An auto-generated type for paginating through multiple CartLines.
- */
-["CartLineConnection"]: {
-		/** A list of edges. */
-	edges: Array<ModelTypes["CartLineEdge"]>,
-	/** A list of the nodes contained in CartLineEdge. */
-	nodes: Array<ModelTypes["CartLine"]>,
-	/** Information to aid in pagination. */
-	pageInfo: ModelTypes["PageInfo"]
 };
 	/** The cost of the merchandise line that the buyer will pay at checkout. */
 ["CartLineCost"]: {
@@ -8952,15 +11125,8 @@ Buyer identity should match the customer's shipping address.
 	/** The total cost of the merchandise line. */
 	totalAmount: ModelTypes["MoneyV2"]
 };
-	/** An auto-generated type which holds one CartLine and a cursor during pagination.
+	/** The estimated cost of the merchandise line that the buyer will pay at checkout.
  */
-["CartLineEdge"]: {
-		/** A cursor for use in pagination. */
-	cursor: string,
-	/** The item at the end of CartLineEdge. */
-	node: ModelTypes["CartLine"]
-};
-	/** The estimated cost of the merchandise line that the buyer will pay at checkout. */
 ["CartLineEstimatedCost"]: {
 		/** The amount of the merchandise line. */
 	amount: ModelTypes["MoneyV2"],
@@ -8971,28 +11137,32 @@ Buyer identity should match the customer's shipping address.
 	/** The estimated total cost of the merchandise line. */
 	totalAmount: ModelTypes["MoneyV2"]
 };
-	/** Specifies the input fields to create a merchandise line on a cart. */
+	/** The input fields to create a merchandise line on a cart. */
 ["CartLineInput"]: {
-	/** An array of key-value pairs that contains additional information about the merchandise line. */
+	/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ModelTypes["AttributeInput"]> | undefined,
 	/** The quantity of the merchandise. */
 	quantity?: number | undefined,
-	/** The identifier of the merchandise that the buyer intends to purchase. */
+	/** The ID of the merchandise that the buyer intends to purchase. */
 	merchandiseId: string,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined
 };
-	/** Specifies the input fields to update a line item on a cart. */
+	/** The input fields to update a line item on a cart. */
 ["CartLineUpdateInput"]: {
-	/** The identifier of the merchandise line. */
+	/** The ID of the merchandise line. */
 	id: string,
 	/** The quantity of the line item. */
 	quantity?: number | undefined,
-	/** The identifier of the merchandise for the line item. */
+	/** The ID of the merchandise for the line item. */
 	merchandiseId?: string | undefined,
-	/** An array of key-value pairs that contains additional information about the merchandise line. */
+	/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<ModelTypes["AttributeInput"]> | undefined,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined
 };
 	/** Return type for `cartLinesAdd` mutation. */
@@ -9016,12 +11186,97 @@ Buyer identity should match the customer's shipping address.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["CartUserError"]>
 };
+	/** The input fields to delete a cart metafield. */
+["CartMetafieldDeleteInput"]: {
+	/** The ID of the cart resource. */
+	ownerId: string,
+	/** The key name of the cart metafield. Can either be a composite key (`namespace.key`) or a simple key
+ that relies on the default app-reserved namespace.
+ */
+	key: string
+};
+	/** Return type for `cartMetafieldDelete` mutation. */
+["CartMetafieldDeletePayload"]: {
+		/** The ID of the deleted cart metafield. */
+	deletedId?: string | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<ModelTypes["MetafieldDeleteUserError"]>
+};
+	/** The input fields for a cart metafield value to set. */
+["CartMetafieldsSetInput"]: {
+	/** The ID of the cart resource. */
+	ownerId: string,
+	/** The key name of the cart metafield. */
+	key: string,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string
+};
+	/** Return type for `cartMetafieldsSet` mutation. */
+["CartMetafieldsSetPayload"]: {
+		/** The list of cart metafields that were set. */
+	metafields?: Array<ModelTypes["Metafield"]> | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<ModelTypes["MetafieldsSetUserError"]>
+};
 	/** Return type for `cartNoteUpdate` mutation. */
 ["CartNoteUpdatePayload"]: {
 		/** The updated cart. */
 	cart?: ModelTypes["Cart"] | undefined,
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["CartUserError"]>
+};
+	/** The input fields for updating the payment method that will be used to checkout.
+ */
+["CartPaymentInput"]: {
+	/** The amount that the customer will be charged at checkout. */
+	amount: ModelTypes["MoneyInput"],
+	/** An ID of the order placed on the originating platform.
+Note that this value doesn't correspond to the Shopify Order ID.
+ */
+	sourceIdentifier?: string | undefined,
+	/** The input fields to use to checkout a cart without providing a payment method.
+Use this payment method input if the total cost of the cart is 0.
+ */
+	freePaymentMethod?: ModelTypes["CartFreePaymentMethodInput"] | undefined,
+	/** The input fields to use when checking out a cart with a direct payment method (like a credit card).
+ */
+	directPaymentMethod?: ModelTypes["CartDirectPaymentMethodInput"] | undefined,
+	/** The input fields to use when checking out a cart with a wallet payment method (like Shop Pay or Apple Pay).
+ */
+	walletPaymentMethod?: ModelTypes["CartWalletPaymentMethodInput"] | undefined
+};
+	/** Return type for `cartPaymentUpdate` mutation. */
+["CartPaymentUpdatePayload"]: {
+		/** The updated cart. */
+	cart?: ModelTypes["Cart"] | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<ModelTypes["CartUserError"]>
+};
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartPreferences"]: {
+		/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?: ModelTypes["CartDeliveryPreference"] | undefined,
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+ */
+	wallet?: Array<string> | undefined
+};
+	/** The input fields represent preferences for the buyer that is interacting with the cart. */
+["CartPreferencesInput"]: {
+	/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?: ModelTypes["CartDeliveryPreferenceInput"] | undefined,
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+
+The input must not contain more than `250` values. */
+	wallet?: Array<string> | undefined
 };
 	/** The input fields for updating the selected delivery options for a delivery group.
  */
@@ -9038,6 +11293,15 @@ Buyer identity should match the customer's shipping address.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["CartUserError"]>
 };
+	/** Return type for `cartSubmitForCompletion` mutation. */
+["CartSubmitForCompletionPayload"]: {
+		/** The result of cart submission for completion. */
+	result?: ModelTypes["CartSubmitForCompletionResult"] | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<ModelTypes["CartUserError"]>
+};
+	/** The result of cart submit completion. */
+["CartSubmitForCompletionResult"]:ModelTypes["SubmitAlreadyAccepted"] | ModelTypes["SubmitFailed"] | ModelTypes["SubmitSuccess"] | ModelTypes["SubmitThrottled"];
 	/** Represents an error that happens during execution of a cart mutation. */
 ["CartUserError"]: {
 		/** The error code. */
@@ -9047,7 +11311,18 @@ Buyer identity should match the customer's shipping address.
 	/** The error message. */
 	message: string
 };
-	/** A container for all the information required to checkout items and pay. */
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["CartWalletPaymentMethodInput"]: {
+	/** The payment method information for the Apple Pay wallet. */
+	applePayWalletContent?: ModelTypes["ApplePayWalletContentInput"] | undefined,
+	/** The payment method information for the Shop Pay wallet. */
+	shopPayWalletContent?: ModelTypes["ShopPayWalletContentInput"] | undefined
+};
+	/** A container for all the information required to checkout items and pay.
+
+The Storefront GraphQL Checkout API is deprecated and will be removed in a future version. Please see https://shopify.dev/changelog/deprecation-of-checkout-apis for more information.
+ */
 ["Checkout"]: {
 		/** The gift cards used on the checkout. */
 	appliedGiftCards: Array<ModelTypes["AppliedGiftCard"]>,
@@ -9064,13 +11339,13 @@ the shipping address is valid.
 	createdAt: ModelTypes["DateTime"],
 	/** The currency code for the checkout. */
 	currencyCode: ModelTypes["CurrencyCode"],
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout. */
 	customAttributes: Array<ModelTypes["Attribute"]>,
 	/** Discounts that have been applied on the checkout. */
 	discountApplications: ModelTypes["DiscountApplicationConnection"],
 	/** The email attached to this checkout. */
 	email?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** A list of line item objects, each one containing information about an item in the checkout. */
 	lineItems: ModelTypes["CheckoutLineItemConnection"],
@@ -9080,7 +11355,7 @@ the shipping address is valid.
 	note?: string | undefined,
 	/** The resulting order from a paid checkout. */
 	order?: ModelTypes["Order"] | undefined,
-	/** The Order Status Page for this Checkout, null when checkout is not completed. */
+	/** The <b>Order status</b> page for this Checkout, null when checkout isn't completed. */
 	orderStatusUrl?: ModelTypes["URL"] | undefined,
 	/** The amount left to be paid. This is equal to the cost of the line items, taxes, and shipping, minus discounts and gift cards. */
 	paymentDue: ModelTypes["MoneyV2"],
@@ -9099,7 +11374,7 @@ date, polling is required until the value is true.
 	/** The discounts that have been allocated onto the shipping line by discount applications.
  */
 	shippingDiscountAllocations: Array<ModelTypes["DiscountAllocation"]>,
-	/** Once a shipping rate is selected by the customer it is transitioned to a `shipping_line` object. */
+	/** Once a shipping rate is selected by the customer it's transitioned to a `shipping_line` object. */
 	shippingLine?: ModelTypes["ShippingRate"] | undefined,
 	/** The price at checkout before shipping and taxes. */
 	subtotalPrice: ModelTypes["MoneyV2"],
@@ -9124,11 +11399,13 @@ date, polling is required until the value is true.
 	/** The url pointing to the checkout accessible from the web. */
 	webUrl: ModelTypes["URL"]
 };
-	/** Specifies the fields required to update a checkout's attributes. */
+	/** The input fields required to update a checkout's attributes. */
 ["CheckoutAttributesUpdateV2Input"]: {
 	/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ModelTypes["AttributeInput"]> | undefined,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -9151,7 +11428,7 @@ each operation.
 		/** The country code for the checkout. For example, `CA`. */
 	countryCode?: ModelTypes["CountryCode"] | undefined
 };
-	/** Specifies the identity of the customer associated with the checkout. */
+	/** The input fields for the identity of the customer associated with the checkout. */
 ["CheckoutBuyerIdentityInput"]: {
 	/** The country code of one of the shop's
 [enabled countries](https://help.shopify.com/en/manual/payments/shopify-payments/multi-currency/setup).
@@ -9190,17 +11467,21 @@ For example, `CA`. Including this field creates a checkout in the specified coun
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["UserError"]>
 };
-	/** Specifies the fields required to create a checkout. */
+	/** The input fields required to create a checkout. */
 ["CheckoutCreateInput"]: {
 	/** The email with which the customer wants to checkout. */
 	email?: string | undefined,
-	/** A list of line item objects, each one containing information about an item in the checkout. */
+	/** A list of line item objects, each one containing information about an item in the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems?: Array<ModelTypes["CheckoutLineItemInput"]> | undefined,
 	/** The shipping address to where the line items will be shipped. */
 	shippingAddress?: ModelTypes["MailingAddressInput"] | undefined,
 	/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ModelTypes["AttributeInput"]> | undefined,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -9293,7 +11574,7 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	customAttributes: Array<ModelTypes["Attribute"]>,
 	/** The discounts that have been allocated onto the checkout line item by discount applications. */
 	discountAllocations: Array<ModelTypes["DiscountAllocation"]>,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The quantity of the line item. */
 	quantity: number,
@@ -9322,24 +11603,28 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	/** The item at the end of CheckoutLineItemEdge. */
 	node: ModelTypes["CheckoutLineItem"]
 };
-	/** Specifies the input fields to create a line item on a checkout. */
+	/** The input fields to create a line item on a checkout. */
 ["CheckoutLineItemInput"]: {
-	/** Extra information in the form of an array of Key-Value pairs about the line item. */
+	/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ModelTypes["AttributeInput"]> | undefined,
 	/** The quantity of the line item. */
 	quantity: number,
-	/** The identifier of the product variant for the line item. */
+	/** The ID of the product variant for the line item. */
 	variantId: string
 };
-	/** Specifies the input fields to update a line item on the checkout. */
+	/** The input fields to update a line item on the checkout. */
 ["CheckoutLineItemUpdateInput"]: {
-	/** The identifier of the line item. */
+	/** The ID of the line item. */
 	id?: string | undefined,
-	/** The variant identifier of the line item. */
+	/** The variant ID of the line item. */
 	variantId?: string | undefined,
 	/** The quantity of the line item. */
 	quantity?: number | undefined,
-	/** Extra information in the form of an array of Key-Value pairs about the line item. */
+	/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<ModelTypes["AttributeInput"]> | undefined
 };
 	/** Return type for `checkoutLineItemsAdd` mutation. */
@@ -9403,7 +11688,9 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	/** The error message. */
 	message: string
 };
-	/** A collection represents a grouping of products that a shop owner can create to organize them or make their shops easier to browse. */
+	/** A collection represents a grouping of products that a shop owner can create to
+organize them or make their shops easier to browse.
+ */
 ["Collection"]: {
 		/** Stripped description of the collection, single line with HTML tags removed. */
 	description: string,
@@ -9413,14 +11700,13 @@ Full validation of addresses is still done at completion time. Defaults to `null
 Limit of 255 characters.
  */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** Image associated with the collection. */
 	image?: ModelTypes["Image"] | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: ModelTypes["URL"] | undefined,
@@ -9430,6 +11716,8 @@ Limit of 255 characters.
 	seo: ModelTypes["SEO"],
 	/** The collection’s name. Limit of 255 characters. */
 	title: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined,
 	/** The date and time when the collection was last modified. */
 	updatedAt: ModelTypes["DateTime"]
 };
@@ -9441,7 +11729,9 @@ Limit of 255 characters.
 	/** A list of the nodes contained in CollectionEdge. */
 	nodes: Array<ModelTypes["Collection"]>,
 	/** Information to aid in pagination. */
-	pageInfo: ModelTypes["PageInfo"]
+	pageInfo: ModelTypes["PageInfo"],
+	/** The total count of Collections. */
+	totalCount: ModelTypes["UnsignedInt64"]
 };
 	/** An auto-generated type which holds one Collection and a cursor during pagination.
  */
@@ -9465,7 +11755,7 @@ For example, "#6A8D48".
 	content: string,
 	/** The content of the comment, complete with HTML formatting. */
 	contentHtml: ModelTypes["HTML"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string
 };
 	/** The author of a comment. */
@@ -9493,6 +11783,91 @@ For example, "#6A8D48".
 	/** The item at the end of CommentEdge. */
 	node: ModelTypes["Comment"]
 };
+	/** Represents information about a company which is also a customer of the shop. */
+["Company"]: {
+		/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was created in Shopify. */
+	createdAt: ModelTypes["DateTime"],
+	/** A unique externally-supplied ID for the company. */
+	externalId?: string | undefined,
+	/** A globally-unique ID. */
+	id: string,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: ModelTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<ModelTypes["Metafield"] | undefined>,
+	/** The name of the company. */
+	name: string,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was last modified. */
+	updatedAt: ModelTypes["DateTime"]
+};
+	/** A company's main point of contact. */
+["CompanyContact"]: {
+		/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was created in Shopify. */
+	createdAt: ModelTypes["DateTime"],
+	/** A globally-unique ID. */
+	id: string,
+	/** The company contact's locale (language). */
+	locale?: string | undefined,
+	/** The company contact's job title. */
+	title?: string | undefined,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was last modified. */
+	updatedAt: ModelTypes["DateTime"]
+};
+	/** A company's location. */
+["CompanyLocation"]: {
+		/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was created in Shopify. */
+	createdAt: ModelTypes["DateTime"],
+	/** A unique externally-supplied ID for the company. */
+	externalId?: string | undefined,
+	/** A globally-unique ID. */
+	id: string,
+	/** The preferred locale of the company location. */
+	locale?: string | undefined,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: ModelTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<ModelTypes["Metafield"] | undefined>,
+	/** The name of the company location. */
+	name: string,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was last modified. */
+	updatedAt: ModelTypes["DateTime"]
+};
+	/** The action for the 3DS payment redirect. */
+["CompletePaymentChallenge"]: {
+		/** The URL for the 3DS payment redirect. */
+	redirectUrl?: ModelTypes["URL"] | undefined
+};
+	/** An error that occurred during a cart completion attempt. */
+["CompletionError"]: {
+		/** The error code. */
+	code: ModelTypes["CompletionErrorCode"],
+	/** The error message. */
+	message?: string | undefined
+};
+	["CompletionErrorCode"]:CompletionErrorCode;
+	/** Represents information about the grouped merchandise in the cart. */
+["ComponentizableCartLine"]: {
+		/** An attribute associated with the cart line. */
+	attribute?: ModelTypes["Attribute"] | undefined,
+	/** The attributes associated with the cart line. Attributes are represented as key-value pairs. */
+	attributes: Array<ModelTypes["Attribute"]>,
+	/** The cost of the merchandise that the buyer will pay for at checkout. The costs are subject to change and changes will be reflected at checkout. */
+	cost: ModelTypes["CartLineCost"],
+	/** The discounts that have been applied to the cart line. */
+	discountAllocations: Array<ModelTypes["CartDiscountAllocation"]>,
+	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
+	estimatedCost: ModelTypes["CartLineEstimatedCost"],
+	/** A globally-unique ID. */
+	id: string,
+	/** The components of the line item. */
+	lineComponents: Array<ModelTypes["CartLine"]>,
+	/** The merchandise that the buyer intends to purchase. */
+	merchandise: ModelTypes["Merchandise"],
+	/** The quantity of the merchandise that the customer intends to purchase. */
+	quantity: number,
+	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
+	sellingPlanAllocation?: ModelTypes["SellingPlanAllocation"] | undefined
+};
 	/** A country. */
 ["Country"]: {
 		/** The languages available for the country. */
@@ -9501,6 +11876,8 @@ For example, "#6A8D48".
 	currency: ModelTypes["Currency"],
 	/** The ISO code of the country. */
 	isoCode: ModelTypes["CountryCode"],
+	/** The market that includes this country. */
+	market?: ModelTypes["Market"] | undefined,
 	/** The name of the country. */
 	name: string,
 	/** The unit system used in the country. */
@@ -9568,16 +11945,15 @@ a Shopify vaulted credit card payment.
 	email?: string | undefined,
 	/** The customer’s first name. */
 	firstName?: string | undefined,
-	/** A unique identifier for the customer. */
+	/** A unique ID for the customer. */
 	id: string,
 	/** The customer's most recently updated, incomplete checkout. */
 	lastIncompleteCheckout?: ModelTypes["Checkout"] | undefined,
 	/** The customer’s last name. */
 	lastName?: string | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** The number of orders that the customer has made at the store in their lifetime. */
 	numberOfOrders: ModelTypes["UnsignedInt64"],
@@ -9599,7 +11975,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	/** The date and time when the customer access token expires. */
 	expiresAt: ModelTypes["DateTime"]
 };
-	/** Specifies the input fields required to create a customer access token. */
+	/** The input fields required to create a customer access token. */
 ["CustomerAccessTokenCreateInput"]: {
 	/** The email associated to the customer. */
 	email: string,
@@ -9647,7 +12023,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	/** The list of errors that occurred from executing the mutation. */
 	customerUserErrors: Array<ModelTypes["CustomerUserError"]>
 };
-	/** Specifies the input fields required to activate a customer. */
+	/** The input fields to activate a customer. */
 ["CustomerActivateInput"]: {
 	/** The activation token required to activate the customer. */
 	activationToken: string,
@@ -9692,7 +12068,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["UserError"]>
 };
-	/** The fields required to create a new customer. */
+	/** The input fields to create a new customer. */
 ["CustomerCreateInput"]: {
 	/** The customer’s first name. */
 	firstName?: string | undefined,
@@ -9747,7 +12123,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["UserError"]>
 };
-	/** Specifies the fields required to reset a customer’s password. */
+	/** The input fields to reset a customer's password. */
 ["CustomerResetInput"]: {
 	/** The reset token required to reset the customer’s password. */
 	resetToken: string,
@@ -9765,7 +12141,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<ModelTypes["UserError"]>
 };
-	/** Specifies the fields required to update the Customer information. */
+	/** The input fields to update the Customer information. */
 ["CustomerUpdateInput"]: {
 	/** The customer’s first name. */
 	firstName?: string | undefined,
@@ -9821,8 +12197,14 @@ Example values: `"29.99"`, `"29.999"`.
  */
 ["DeliveryAddressInput"]: {
 	/** A delivery address preference of a buyer that is interacting with the cart. */
-	deliveryAddress?: ModelTypes["MailingAddressInput"] | undefined
+	deliveryAddress?: ModelTypes["MailingAddressInput"] | undefined,
+	/** Defines what kind of address validation is requested. */
+	deliveryAddressValidationStrategy?: ModelTypes["DeliveryAddressValidationStrategy"] | undefined,
+	/** The ID of a customer address that is associated with the buyer that is interacting with the cart.
+ */
+	customerAddressId?: string | undefined
 };
+	["DeliveryAddressValidationStrategy"]:DeliveryAddressValidationStrategy;
 	["DeliveryMethodType"]:DeliveryMethodType;
 	["DigitalWallet"]:DigitalWallet;
 	/** An amount discounting the line that has been allocated by a discount.
@@ -9876,7 +12258,7 @@ the time that it is applied.
 	value: ModelTypes["PricingValue"]
 };
 	/** Represents an error in the input of a mutation. */
-["DisplayableError"]: ModelTypes["CartUserError"] | ModelTypes["CheckoutUserError"] | ModelTypes["CustomerUserError"] | ModelTypes["UserError"];
+["DisplayableError"]: ModelTypes["CartUserError"] | ModelTypes["CheckoutUserError"] | ModelTypes["CustomerUserError"] | ModelTypes["MetafieldDeleteUserError"] | ModelTypes["MetafieldsSetUserError"] | ModelTypes["UserError"];
 	/** Represents a web address. */
 ["Domain"]: {
 		/** The host name of the domain (eg: `example.com`). */
@@ -9896,12 +12278,14 @@ the time that it is applied.
 	embeddedUrl: ModelTypes["URL"],
 	/** The host of the external video. */
 	host: ModelTypes["MediaHost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The media content type. */
 	mediaContentType: ModelTypes["MediaContentType"],
 	/** The origin URL of the video on the respective host. */
 	originUrl: ModelTypes["URL"],
+	/** The presentation for a media. */
+	presentation?: ModelTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: ModelTypes["Image"] | undefined
 };
@@ -9911,11 +12295,16 @@ the time that it is applied.
 	id: string,
 	/** A human-friendly string for this filter. */
 	label: string,
+	/** Describes how to present the filter values.
+Returns a value only for filters of type `LIST`. Returns null for other types.
+ */
+	presentation?: ModelTypes["FilterPresentation"] | undefined,
 	/** An enumeration that denotes the type of data this filter represents. */
 	type: ModelTypes["FilterType"],
 	/** The list of values for this filter. */
 	values: Array<ModelTypes["FilterValue"]>
 };
+	["FilterPresentation"]:FilterPresentation;
 	["FilterType"]:FilterType;
 	/** A selectable value within a filter. */
 ["FilterValue"]: {
@@ -9923,13 +12312,19 @@ the time that it is applied.
 	count: number,
 	/** A unique identifier. */
 	id: string,
+	/** The visual representation when the filter's presentation is `IMAGE`. */
+	image?: ModelTypes["MediaImage"] | undefined,
 	/** An input object that can be used to filter by this value on the parent field.
 
-The value is provided as a helper for building dynamic filtering UI. For example, if you have a list of selected `FilterValue` objects, you can combine their respective `input` values to use in a subsequent query.
+The value is provided as a helper for building dynamic filtering UI. For
+example, if you have a list of selected `FilterValue` objects, you can combine
+their respective `input` values to use in a subsequent query.
  */
 	input: ModelTypes["JSON"],
 	/** A human-friendly string for this filter value. */
-	label: string
+	label: string,
+	/** The visual representation when the filter's presentation is `SWATCH`. */
+	swatch?: ModelTypes["Swatch"] | undefined
 };
 	/** Represents a single fulfillment in an order. */
 ["Fulfillment"]: {
@@ -9978,7 +12373,7 @@ such as the tracking number and tracking URL.
 ["GenericFile"]: {
 		/** A word or phrase to indicate the contents of a file. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The MIME type of the file. */
 	mimeType?: string | undefined,
@@ -9989,7 +12384,7 @@ such as the tracking number and tracking URL.
 	/** The URL of the file. */
 	url?: ModelTypes["URL"] | undefined
 };
-	/** Used to specify a geographical location. */
+	/** The input fields used to specify a geographical location. */
 ["GeoCoordinateInput"]: {
 	/** The coordinate's latitude value. */
 	latitude: number,
@@ -10003,11 +12398,11 @@ Example value: `"<p>Grey cotton knit sweater.</p>"`
  */
 ["HTML"]:any;
 	/** Represents information about the metafields associated to the specified resource. */
-["HasMetafields"]: ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Collection"] | ModelTypes["Customer"] | ModelTypes["Order"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["ProductVariant"] | ModelTypes["Shop"];
-	/** Identifies a metafield on an owner resource by namespace and key. */
+["HasMetafields"]: ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Cart"] | ModelTypes["Collection"] | ModelTypes["Company"] | ModelTypes["CompanyLocation"] | ModelTypes["Customer"] | ModelTypes["Location"] | ModelTypes["Market"] | ModelTypes["Order"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["ProductVariant"] | ModelTypes["Shop"];
+	/** The input fields to identify a metafield on an owner resource by namespace and key. */
 ["HasMetafieldsIdentifier"]: {
-	/** A container for a set of metafields. */
-	namespace: string,
+	/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined,
 	/** The identifier for the metafield. */
 	key: string
 };
@@ -10015,9 +12410,9 @@ Example value: `"<p>Grey cotton knit sweater.</p>"`
 ["Image"]: {
 		/** A word or phrase to share the nature or contents of an image. */
 	altText?: string | undefined,
-	/** The original height of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original height of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	height?: number | undefined,
-	/** A unique identifier for the image. */
+	/** A unique ID for the image. */
 	id?: string | undefined,
 	/** The location of the original image as a URL.
 
@@ -10029,7 +12424,7 @@ If there are any existing transformations in the original source URL, they will 
 	/** The location of the transformed image as a URL.
 
 All transformation arguments are considered "best-effort". If they can be applied to an image, they will be.
-Otherwise any transformations which an image type does not support will be ignored.
+Otherwise any transformations which an image type doesn't support will be ignored.
  */
 	transformedSrc: ModelTypes["URL"],
 	/** The location of the image as a URL.
@@ -10041,7 +12436,7 @@ All transformation options are considered "best-effort". Any transformation that
 If you need multiple variations of the same image, then you can use [GraphQL aliases](https://graphql.org/learn/queries/#aliases).
  */
 	url: ModelTypes["URL"],
-	/** The original width of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original width of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	width?: number | undefined
 };
 	/** An auto-generated type for paginating through multiple Images.
@@ -10065,13 +12460,16 @@ If you need multiple variations of the same image, then you can use [GraphQL ali
 };
 	/** The available options for transforming an image.
 
-All transformation options are considered best effort. Any transformation that the original image type doesn't support will be ignored.
+All transformation options are considered best effort. Any transformation that
+the original image type doesn't support will be ignored.
  */
 ["ImageTransformInput"]: {
 	/** The region of the image to remain after cropping.
-Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields, where the `maxWidth` and `maxHeight` aren't equal.
+Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields,
+where the `maxWidth` and `maxHeight` aren't equal.
 The `crop` argument should coincide with the smaller value. A smaller `maxWidth` indicates a `LEFT` or `RIGHT` crop, while
-a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{ maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
+a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{
+maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
 in an image with a width of 5 and height of 10, where the right side of the image is removed.
  */
 	crop?: ModelTypes["CropRegion"] | undefined,
@@ -10088,6 +12486,16 @@ in an image with a width of 5 and height of 10, where the right side of the imag
 Supported conversions: `.svg` to `.png`, any file type to `.jpg`, and any file type to `.webp`.
  */
 	preferredContentType?: ModelTypes["ImageContentType"] | undefined
+};
+	/** Provide details about the contexts influenced by the @inContext directive on a field. */
+["InContextAnnotation"]: {
+		description: string,
+	type: ModelTypes["InContextAnnotationType"]
+};
+	/** This gives information about the type of context that impacts a field. For example, for a query with @inContext(language: "EN"), the type would point to the name: LanguageCode and kind: ENUM. */
+["InContextAnnotationType"]: {
+		kind: string,
+	name: string
 };
 	/** A [JSON](https://www.json.org/json-en.html) object.
 
@@ -10123,14 +12531,20 @@ Example value:
 	/** The country of the active localized experience. Use the `@inContext` directive to change this value. */
 	country: ModelTypes["Country"],
 	/** The language of the active localized experience. Use the `@inContext` directive to change this value. */
-	language: ModelTypes["Language"]
+	language: ModelTypes["Language"],
+	/** The market including the country of the active localized experience. Use the `@inContext` directive to change this value. */
+	market: ModelTypes["Market"]
 };
 	/** Represents a location where product inventory is held. */
 ["Location"]: {
 		/** The address of the location. */
 	address: ModelTypes["LocationAddress"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: ModelTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** The name of the location. */
 	name: string
 };
@@ -10189,14 +12603,11 @@ Example value:
 	/** The second line of the address. Typically the number of the apartment, suite, or unit.
  */
 	address2?: string | undefined,
-	/** The name of the city, district, village, or town.
- */
+	/** The name of the city, district, village, or town. */
 	city?: string | undefined,
-	/** The name of the customer's company or organization.
- */
+	/** The name of the customer's company or organization. */
 	company?: string | undefined,
-	/** The name of the country.
- */
+	/** The name of the country. */
 	country?: string | undefined,
 	/** The two-letter code for the country of the address.
 
@@ -10214,7 +12625,7 @@ For example, US.
 	formatted: Array<string>,
 	/** A comma-separated list of the values for city, province, and country. */
 	formattedArea?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The last name of the customer. */
 	lastName?: string | undefined,
@@ -10222,8 +12633,7 @@ For example, US.
 	latitude?: number | undefined,
 	/** The longitude coordinate of the customer address. */
 	longitude?: number | undefined,
-	/** The full name of the customer, based on firstName and lastName.
- */
+	/** The full name of the customer, based on firstName and lastName. */
 	name?: string | undefined,
 	/** A unique phone number for the customer.
 
@@ -10232,7 +12642,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	phone?: string | undefined,
 	/** The region of the address, such as the province, state, or district. */
 	province?: string | undefined,
-	/** The two-letter code for the region.
+	/** The alphanumeric code for the region.
 
 For example, ON.
  */
@@ -10258,7 +12668,7 @@ For example, ON.
 	/** The item at the end of MailingAddressEdge. */
 	node: ModelTypes["MailingAddress"]
 };
-	/** Specifies the fields accepted to create or update a mailing address. */
+	/** The input fields to create or update a mailing address. */
 ["MailingAddressInput"]: {
 	/** The first line of the address. Typically the street address or PO Box number.
  */
@@ -10304,6 +12714,18 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The value of the discount application. */
 	value: ModelTypes["PricingValue"]
 };
+	/** A group of one or more regions of the world that a merchant is targeting for sales. To learn more about markets, refer to [the Shopify Markets conceptual overview](/docs/apps/markets). */
+["Market"]: {
+		/** A human-readable unique string for the market automatically generated from its title.
+ */
+	handle: string,
+	/** A globally-unique ID. */
+	id: string,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: ModelTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<ModelTypes["Metafield"] | undefined>
+};
 	/** Represents a media interface. */
 ["Media"]: ModelTypes["ExternalVideo"] | ModelTypes["MediaImage"] | ModelTypes["Model3d"] | ModelTypes["Video"];
 	/** An auto-generated type for paginating through multiple Media.
@@ -10330,21 +12752,32 @@ Formatted using E.164 standard. For example, _+16135551111_.
 ["MediaImage"]: {
 		/** A word or phrase to share the nature or contents of a media. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The image for the media. */
 	image?: ModelTypes["Image"] | undefined,
 	/** The media content type. */
 	mediaContentType: ModelTypes["MediaContentType"],
+	/** The presentation for a media. */
+	presentation?: ModelTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: ModelTypes["Image"] | undefined
 };
-	/** A menu used for navigation within a storefront.
+	/** A media presentation. */
+["MediaPresentation"]: {
+		/** A JSON object representing a presentation view. */
+	asJson?: ModelTypes["JSON"] | undefined,
+	/** A globally-unique ID. */
+	id: string
+};
+	["MediaPresentationFormat"]:MediaPresentationFormat;
+	/** A [navigation menu](https://help.shopify.com/manual/online-store/menus-and-links) representing a hierarchy
+of hyperlinks (items).
  */
 ["Menu"]: {
 		/** The menu's handle. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The menu's child items. */
 	items: Array<ModelTypes["MenuItem"]>,
@@ -10353,13 +12786,14 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The menu's title. */
 	title: string
 };
-	/** A menu item within a parent menu.
- */
+	/** A menu item within a parent menu. */
 ["MenuItem"]: {
-		/** A globally-unique identifier. */
+		/** A globally-unique ID. */
 	id: string,
 	/** The menu item's child items. */
 	items: Array<ModelTypes["MenuItem"]>,
+	/** The linked resource. */
+	resource?: ModelTypes["MenuItemResource"] | undefined,
 	/** The ID of the linked resource. */
 	resourceId?: string | undefined,
 	/** The menu item's tags to filter a collection. */
@@ -10371,6 +12805,9 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The menu item's URL. */
 	url?: ModelTypes["URL"] | undefined
 };
+	/** The list of possible resources a `MenuItem` can reference.
+ */
+["MenuItemResource"]:ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Collection"] | ModelTypes["Metaobject"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["ShopPolicy"];
 	["MenuItemType"]:MenuItemType;
 	/** The merchandise to be purchased at checkout. */
 ["Merchandise"]:ModelTypes["ProductVariant"];
@@ -10382,26 +12819,36 @@ comprised of keys, values, and value types.
 	createdAt: ModelTypes["DateTime"],
 	/** The description of a metafield. */
 	description?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** The key name for a metafield. */
+	/** The unique identifier for the metafield within its namespace. */
 	key: string,
-	/** The namespace for a metafield. */
+	/** The container for a group of metafields that the metafield is associated with. */
 	namespace: string,
-	/** The parent object that the metafield belongs to. */
+	/** The type of resource that the metafield is attached to. */
 	parentResource: ModelTypes["MetafieldParentResource"],
-	/** Returns a reference object if the metafield definition's type is a resource reference. */
+	/** Returns a reference object if the metafield's type is a resource reference. */
 	reference?: ModelTypes["MetafieldReference"] | undefined,
 	/** A list of reference objects if the metafield's type is a resource reference list. */
 	references?: ModelTypes["MetafieldReferenceConnection"] | undefined,
 	/** The type name of the metafield.
-See the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
+Refer to the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
  */
 	type: string,
-	/** The date and time when the storefront metafield was updated. */
+	/** The date and time when the metafield was last updated. */
 	updatedAt: ModelTypes["DateTime"],
-	/** The value of a metafield. */
+	/** The data stored in the metafield. Always stored as a string, regardless of the metafield's type. */
 	value: string
+};
+	["MetafieldDeleteErrorCode"]:MetafieldDeleteErrorCode;
+	/** An error that occurs during the execution of cart metafield deletion. */
+["MetafieldDeleteUserError"]: {
+		/** The error code. */
+	code?: ModelTypes["MetafieldDeleteErrorCode"] | undefined,
+	/** The path to the input field that caused the error. */
+	field?: Array<string> | undefined,
+	/** The error message. */
+	message: string
 };
 	/** A filter used to view a subset of products in a collection matching a specific metafield value.
 
@@ -10420,10 +12867,10 @@ Only the following metafield types are currently supported:
 	value: string
 };
 	/** A resource that the metafield belongs to. */
-["MetafieldParentResource"]:ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Collection"] | ModelTypes["Customer"] | ModelTypes["Order"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["ProductVariant"] | ModelTypes["Shop"];
+["MetafieldParentResource"]:ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Cart"] | ModelTypes["Collection"] | ModelTypes["Company"] | ModelTypes["CompanyLocation"] | ModelTypes["Customer"] | ModelTypes["Location"] | ModelTypes["Market"] | ModelTypes["Order"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["ProductVariant"] | ModelTypes["Shop"];
 	/** Returns the resource which is being referred to by a metafield.
  */
-["MetafieldReference"]:ModelTypes["Collection"] | ModelTypes["GenericFile"] | ModelTypes["MediaImage"] | ModelTypes["Metaobject"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["ProductVariant"] | ModelTypes["Video"];
+["MetafieldReference"]:ModelTypes["Collection"] | ModelTypes["GenericFile"] | ModelTypes["MediaImage"] | ModelTypes["Metaobject"] | ModelTypes["Model3d"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["ProductVariant"] | ModelTypes["Video"];
 	/** An auto-generated type for paginating through multiple MetafieldReferences.
  */
 ["MetafieldReferenceConnection"]: {
@@ -10442,6 +12889,18 @@ Only the following metafield types are currently supported:
 	/** The item at the end of MetafieldReferenceEdge. */
 	node: ModelTypes["MetafieldReference"]
 };
+	/** An error that occurs during the execution of `MetafieldsSet`. */
+["MetafieldsSetUserError"]: {
+		/** The error code. */
+	code?: ModelTypes["MetafieldsSetUserErrorCode"] | undefined,
+	/** The index of the array element that's causing the error. */
+	elementIndex?: number | undefined,
+	/** The path to the input field that caused the error. */
+	field?: Array<string> | undefined,
+	/** The error message. */
+	message: string
+};
+	["MetafieldsSetUserErrorCode"]:MetafieldsSetUserErrorCode;
 	/** An instance of a user-defined model based on a MetaobjectDefinition. */
 ["Metaobject"]: {
 		/** Accesses a field of the object by key. */
@@ -10452,8 +12911,14 @@ Omitted object keys can be assumed null, and no guarantees are made about field 
 	fields: Array<ModelTypes["MetaobjectField"]>,
 	/** The unique handle of the metaobject. Useful as a custom ID. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
+	/** The URL used for viewing the metaobject on the shop's Online Store. Returns `null` if the metaobject definition doesn't have the `online_store` capability. */
+	onlineStoreUrl?: ModelTypes["URL"] | undefined,
+	/** The metaobject's SEO information. Returns `null` if the metaobject definition
+doesn't have the `renderable` capability.
+ */
+	seo?: ModelTypes["MetaobjectSEO"] | undefined,
 	/** The type of the metaobject. Defines the namespace of its associated metafields. */
 	type: string,
 	/** The date and time when the metaobject was last updated. */
@@ -10499,14 +12964,23 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	/** The type of the metaobject. */
 	type: string
 };
+	/** SEO information for a metaobject. */
+["MetaobjectSEO"]: {
+		/** The meta description. */
+	description?: ModelTypes["MetaobjectField"] | undefined,
+	/** The SEO title. */
+	title?: ModelTypes["MetaobjectField"] | undefined
+};
 	/** Represents a Shopify hosted 3D model. */
 ["Model3d"]: {
 		/** A word or phrase to share the nature or contents of a media. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The media content type. */
 	mediaContentType: ModelTypes["MediaContentType"],
+	/** The presentation for a media. */
+	presentation?: ModelTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: ModelTypes["Image"] | undefined,
 	/** The sources for a 3d model. */
@@ -10523,7 +12997,7 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	/** The URL of the 3d model. */
 	url: string
 };
-	/** Specifies the fields for a monetary value with currency. */
+	/** The input fields for a monetary value with currency. */
 ["MoneyInput"]: {
 	/** Decimal money amount. */
 	amount: ModelTypes["Decimal"],
@@ -10558,10 +13032,21 @@ and should match the customer's shipping address.
 	cartLinesRemove?: ModelTypes["CartLinesRemovePayload"] | undefined,
 	/** Updates one or more merchandise lines on a cart. */
 	cartLinesUpdate?: ModelTypes["CartLinesUpdatePayload"] | undefined,
+	/** Deletes a cart metafield. */
+	cartMetafieldDelete?: ModelTypes["CartMetafieldDeletePayload"] | undefined,
+	/** Sets cart metafield values. Cart metafield values will be set regardless if they were previously created or not.
+
+Allows a maximum of 25 cart metafields to be set at a time.
+ */
+	cartMetafieldsSet?: ModelTypes["CartMetafieldsSetPayload"] | undefined,
 	/** Updates the note on the cart. */
 	cartNoteUpdate?: ModelTypes["CartNoteUpdatePayload"] | undefined,
+	/** Update the customer's payment method that will be used to checkout. */
+	cartPaymentUpdate?: ModelTypes["CartPaymentUpdatePayload"] | undefined,
 	/** Update the selected delivery options for a delivery group. */
 	cartSelectedDeliveryOptionsUpdate?: ModelTypes["CartSelectedDeliveryOptionsUpdatePayload"] | undefined,
+	/** Submit the cart for checkout completion. */
+	cartSubmitForCompletion?: ModelTypes["CartSubmitForCompletionPayload"] | undefined,
 	/** Updates the attributes of a checkout if `allowPartialAddresses` is `true`. */
 	checkoutAttributesUpdateV2?: ModelTypes["CheckoutAttributesUpdateV2Payload"] | undefined,
 	/** Completes a checkout without providing payment information. You can use this mutation for free items or items whose purchase price is covered by a gift card. */
@@ -10636,8 +13121,9 @@ the [`customerResetByUrl`](https://shopify.dev/api/storefront/latest/mutations/c
 [`customerReset`](https://shopify.dev/api/storefront/latest/mutations/customerReset) mutation to reset the
 customer password.
 
-This mutation is throttled by IP. With authenticated access,
+This mutation is throttled by IP. With private access,
 you can provide a [`Shopify-Storefront-Buyer-IP`](https://shopify.dev/api/usage/authentication#optional-ip-header) instead of the request IP.
+The header is case-sensitive and must be sent as `Shopify-Storefront-Buyer-IP`.
 
 Make sure that the value provided to `Shopify-Storefront-Buyer-IP` is trusted. Unthrottled access to this
 mutation presents a security risk.
@@ -10657,18 +13143,20 @@ mutation presents a security risk.
 This interface is used by the [node](https://shopify.dev/api/admin-graphql/unstable/queries/node)
 and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) queries.
  */
-["Node"]: ModelTypes["AppliedGiftCard"] | ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Cart"] | ModelTypes["CartLine"] | ModelTypes["Checkout"] | ModelTypes["CheckoutLineItem"] | ModelTypes["Collection"] | ModelTypes["Comment"] | ModelTypes["ExternalVideo"] | ModelTypes["GenericFile"] | ModelTypes["Location"] | ModelTypes["MailingAddress"] | ModelTypes["MediaImage"] | ModelTypes["Menu"] | ModelTypes["MenuItem"] | ModelTypes["Metafield"] | ModelTypes["Metaobject"] | ModelTypes["Model3d"] | ModelTypes["Order"] | ModelTypes["Page"] | ModelTypes["Payment"] | ModelTypes["Product"] | ModelTypes["ProductOption"] | ModelTypes["ProductVariant"] | ModelTypes["Shop"] | ModelTypes["ShopPolicy"] | ModelTypes["UrlRedirect"] | ModelTypes["Video"];
+["Node"]: ModelTypes["AppliedGiftCard"] | ModelTypes["Article"] | ModelTypes["BaseCartLine"] | ModelTypes["Blog"] | ModelTypes["Cart"] | ModelTypes["CartLine"] | ModelTypes["Checkout"] | ModelTypes["CheckoutLineItem"] | ModelTypes["Collection"] | ModelTypes["Comment"] | ModelTypes["Company"] | ModelTypes["CompanyContact"] | ModelTypes["CompanyLocation"] | ModelTypes["ComponentizableCartLine"] | ModelTypes["ExternalVideo"] | ModelTypes["GenericFile"] | ModelTypes["Location"] | ModelTypes["MailingAddress"] | ModelTypes["Market"] | ModelTypes["MediaImage"] | ModelTypes["MediaPresentation"] | ModelTypes["Menu"] | ModelTypes["MenuItem"] | ModelTypes["Metafield"] | ModelTypes["Metaobject"] | ModelTypes["Model3d"] | ModelTypes["Order"] | ModelTypes["Page"] | ModelTypes["Payment"] | ModelTypes["Product"] | ModelTypes["ProductOption"] | ModelTypes["ProductVariant"] | ModelTypes["Shop"] | ModelTypes["ShopPolicy"] | ModelTypes["UrlRedirect"] | ModelTypes["Video"];
 	/** Represents a resource that can be published to the Online Store sales channel. */
-["OnlineStorePublishable"]: ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Collection"] | ModelTypes["Page"] | ModelTypes["Product"];
+["OnlineStorePublishable"]: ModelTypes["Article"] | ModelTypes["Blog"] | ModelTypes["Collection"] | ModelTypes["Metaobject"] | ModelTypes["Page"] | ModelTypes["Product"];
 	/** An order is a customer’s completed request to purchase one or more products from a shop. An order is created when a customer completes the checkout process, during which time they provides an email address, billing address and payment information. */
 ["Order"]: {
-		/** The reason for the order's cancellation. Returns `null` if the order wasn't canceled. */
+		/** The address associated with the payment method. */
+	billingAddress?: ModelTypes["MailingAddress"] | undefined,
+	/** The reason for the order's cancellation. Returns `null` if the order wasn't canceled. */
 	cancelReason?: ModelTypes["OrderCancelReason"] | undefined,
 	/** The date and time when the order was canceled. Returns null if the order wasn't canceled. */
 	canceledAt?: ModelTypes["DateTime"] | undefined,
 	/** The code of the currency used for the payment. */
 	currencyCode: ModelTypes["CurrencyCode"],
-	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes are not included unless the order is a taxes-included order. */
+	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes aren't included unless the order is a taxes-included order. */
 	currentSubtotalPrice: ModelTypes["MoneyV2"],
 	/** The total cost of duties for the order, including refunds. */
 	currentTotalDuties?: ModelTypes["MoneyV2"] | undefined,
@@ -10676,7 +13164,7 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 	currentTotalPrice: ModelTypes["MoneyV2"],
 	/** The total of all taxes applied to the order, excluding taxes for returned line items. */
 	currentTotalTax: ModelTypes["MoneyV2"],
-	/** A list of the custom attributes added to the order. */
+	/** A list of the custom attributes added to the order. For example, whether an order is a customer's first. */
 	customAttributes: Array<ModelTypes["Attribute"]>,
 	/** The locale code in which this specific order happened. */
 	customerLocale?: string | undefined,
@@ -10692,14 +13180,13 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 	financialStatus?: ModelTypes["OrderFinancialStatus"] | undefined,
 	/** The fulfillment status for the order. */
 	fulfillmentStatus: ModelTypes["OrderFulfillmentStatus"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** List of the order’s line items. */
 	lineItems: ModelTypes["OrderLineItemConnection"],
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** Unique identifier for the order that appears on the order.
 For example, _#1000_ or _Store1001.
@@ -10781,7 +13268,7 @@ If no value is provided, it will be auto-generated based on current date and tim
 	discountAllocations: Array<ModelTypes["DiscountAllocation"]>,
 	/** The total price of the line item, including discounts, and displayed in the presentment currency. */
 	discountedTotalPrice: ModelTypes["MoneyV2"],
-	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it is displayed in the presentment currency. */
+	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it's displayed in the presentment currency. */
 	originalTotalPrice: ModelTypes["MoneyV2"],
 	/** The number of products variants associated to the line item. */
 	quantity: number,
@@ -10819,12 +13306,11 @@ If no value is provided, it will be auto-generated based on current date and tim
 	createdAt: ModelTypes["DateTime"],
 	/** A human-friendly unique string for the page automatically generated from its title. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: ModelTypes["URL"] | undefined,
@@ -10832,6 +13318,8 @@ If no value is provided, it will be auto-generated based on current date and tim
 	seo?: ModelTypes["SEO"] | undefined,
 	/** The title of the page. */
 	title: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined,
 	/** The timestamp of the latest page update. */
 	updatedAt: ModelTypes["DateTime"]
 };
@@ -10882,7 +13370,7 @@ For more information, please read our [GraphQL Pagination Usage Guide](https://s
 	creditCard?: ModelTypes["CreditCard"] | undefined,
 	/** A message describing a processing error during asynchronous processing. */
 	errorMessage?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** A client-side generated token to identify a payment and perform idempotent operations.
 For more information, refer to
@@ -10908,15 +13396,36 @@ For more information, refer to
 	countryCode: ModelTypes["CountryCode"],
 	/** The three-letter code for the shop's primary currency. */
 	currencyCode: ModelTypes["CurrencyCode"],
-	/** A list of enabled currencies (ISO 4217 format) that the shop accepts. Merchants can enable currencies from their Shopify Payments settings in the Shopify admin. */
+	/** A list of enabled currencies (ISO 4217 format) that the shop accepts.
+Merchants can enable currencies from their Shopify Payments settings in the Shopify admin.
+ */
 	enabledPresentmentCurrencies: Array<ModelTypes["CurrencyCode"]>,
-	/** The shop’s Shopify Payments account id. */
+	/** The shop’s Shopify Payments account ID. */
 	shopifyPaymentsAccountId?: string | undefined,
 	/** List of the digital wallets which the shop supports. */
 	supportedDigitalWallets: Array<ModelTypes["DigitalWallet"]>
 };
 	["PaymentTokenType"]:PaymentTokenType;
-	/** A filter used to view a subset of products in a collection matching a specific price range. */
+	["PredictiveSearchLimitScope"]:PredictiveSearchLimitScope;
+	/** A predictive search result represents a list of products, collections, pages, articles, and query suggestions
+that matches the predictive search query.
+ */
+["PredictiveSearchResult"]: {
+		/** The articles that match the search query. */
+	articles: Array<ModelTypes["Article"]>,
+	/** The articles that match the search query. */
+	collections: Array<ModelTypes["Collection"]>,
+	/** The pages that match the search query. */
+	pages: Array<ModelTypes["Page"]>,
+	/** The products that match the search query. */
+	products: Array<ModelTypes["Product"]>,
+	/** The query suggestions that are relevant to the search query. */
+	queries: Array<ModelTypes["SearchQuerySuggestion"]>
+};
+	["PredictiveSearchType"]:PredictiveSearchType;
+	["PreferenceDeliveryMethodType"]:PreferenceDeliveryMethodType;
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific price range.
+ */
 ["PriceRangeFilter"]: {
 	/** The minimum price in the range. Defaults to zero. */
 	min?: number | undefined,
@@ -10930,67 +13439,97 @@ For more information, refer to
 };
 	/** The price value (fixed or percentage) for a discount application. */
 ["PricingValue"]:ModelTypes["MoneyV2"] | ModelTypes["PricingPercentageValue"];
-	/** A product represents an individual item for sale in a Shopify store. Products are often physical, but they don't have to be.
-For example, a digital download (such as a movie, music or ebook file) also qualifies as a product, as do services (such as equipment rental, work for hire, customization of another product or an extended warranty). */
+	/** The `Product` object lets you manage products in a merchant’s store.
+
+Products are the goods and services that merchants offer to customers.
+They can include various details such as title, description, price, images, and options such as size or color.
+You can use [product variants](/docs/api/storefront/latest/objects/ProductVariant)
+to create or update different versions of the same product.
+You can also add or update product [media](/docs/api/storefront/latest/interfaces/Media).
+Products can be organized by grouping them into a [collection](/docs/api/storefront/latest/objects/Collection).
+
+Learn more about working with [products and collections](/docs/storefronts/headless/building-with-the-storefront-api/products-collections).
+ */
 ["Product"]: {
 		/** Indicates if at least one product variant is available for sale. */
 	availableForSale: boolean,
-	/** List of collections a product belongs to. */
+	/** A list of [collections](/docs/api/storefront/latest/objects/Collection) that include the product. */
 	collections: ModelTypes["CollectionConnection"],
-	/** The compare at price of the product across all variants. */
+	/** The [compare-at price range](https://help.shopify.com/manual/products/details/product-pricing/sale-pricing) of the product in the shop's default currency. */
 	compareAtPriceRange: ModelTypes["ProductPriceRange"],
 	/** The date and time when the product was created. */
 	createdAt: ModelTypes["DateTime"],
-	/** Stripped description of the product, single line with HTML tags removed. */
+	/** A single-line description of the product, with [HTML tags](https://developer.mozilla.org/en-US/docs/Web/HTML) removed. */
 	description: string,
-	/** The description of the product, complete with HTML formatting. */
+	/** The description of the product, with
+HTML tags. For example, the description might include
+bold `<strong></strong>` and italic `<i></i>` text.
+ */
 	descriptionHtml: ModelTypes["HTML"],
 	/** The featured image for the product.
 
 This field is functionally equivalent to `images(first: 1)`.
  */
 	featuredImage?: ModelTypes["Image"] | undefined,
-	/** A human-friendly unique string for the Product automatically generated from its title.
-They are used by the Liquid templating language to refer to objects.
+	/** A unique, human-readable string of the product's title.
+A handle can contain letters, hyphens (`-`), and numbers, but no spaces.
+The handle is used in the online store URL for the product.
  */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** List of images associated with the product. */
 	images: ModelTypes["ImageConnection"],
 	/** Whether the product is a gift card. */
 	isGiftCard: boolean,
-	/** The media associated with the product. */
+	/** The [media](/docs/apps/build/online-store/product-media) that are associated with the product. Valid media are images, 3D models, videos. */
 	media: ModelTypes["MediaConnection"],
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
-	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
+	/** The product's URL on the online store.
+If `null`, then the product isn't published to the online store sales channel.
+ */
 	onlineStoreUrl?: ModelTypes["URL"] | undefined,
-	/** List of product options. */
+	/** A list of product options. The limit is defined by the [shop's resource limits for product options](/docs/api/admin-graphql/latest/objects/Shop#field-resourcelimits) (`Shop.resourceLimits.maxProductOptions`). */
 	options: Array<ModelTypes["ProductOption"]>,
-	/** The price range. */
+	/** The minimum and maximum prices of a product, expressed in decimal numbers.
+For example, if the product is priced between $10.00 and $50.00,
+then the price range is $10.00 - $50.00.
+ */
 	priceRange: ModelTypes["ProductPriceRange"],
-	/** A categorization that a product can be tagged with, commonly used for filtering and searching. */
+	/** The [product type](https://help.shopify.com/manual/products/details/product-type)
+that merchants define.
+ */
 	productType: string,
 	/** The date and time when the product was published to the channel. */
 	publishedAt: ModelTypes["DateTime"],
-	/** Whether the product can only be purchased with a selling plan. */
+	/** Whether the product can only be purchased with a [selling plan](/docs/apps/build/purchase-options/subscriptions/selling-plans). Products that are sold on subscription (`requiresSellingPlan: true`) can be updated only for online stores. If you update a product to be subscription-only (`requiresSellingPlan:false`), then the product is unpublished from all channels, except the online store. */
 	requiresSellingPlan: boolean,
-	/** A list of a product's available selling plan groups. A selling plan group represents a selling method. For example, 'Subscribe and save' is a selling method where customers pay for goods or services per delivery. A selling plan group contains individual selling plans. */
+	/** A list of all [selling plan groups](/docs/apps/build/purchase-options/subscriptions/selling-plans/build-a-selling-plan) that are associated with the product either directly, or through the product's variants. */
 	sellingPlanGroups: ModelTypes["SellingPlanGroupConnection"],
-	/** The product's SEO information. */
+	/** The [SEO title and description](https://help.shopify.com/manual/promoting-marketing/seo/adding-keywords)
+that are associated with a product.
+ */
 	seo: ModelTypes["SEO"],
-	/** A comma separated list of tags that have been added to the product.
-Additional access scope required for private apps: unauthenticated_read_product_tags.
+	/** A comma-separated list of searchable keywords that are
+associated with the product. For example, a merchant might apply the `sports`
+and `summer` tags to products that are associated with sportwear for summer.
+Updating `tags` overwrites any existing tags that were previously added to the product.
+To add new tags without overwriting existing tags,
+use the GraphQL Admin API's [`tagsAdd`](/docs/api/admin-graphql/latest/mutations/tagsadd)
+mutation.
  */
 	tags: Array<string>,
-	/** The product’s title. */
+	/** The name for the product that displays to customers. The title is used to construct the product's handle.
+For example, if a product is titled "Black Sunglasses", then the handle is `black-sunglasses`.
+ */
 	title: string,
-	/** The total quantity of inventory in stock for this Product. */
+	/** The quantity of inventory that's in stock. */
 	totalInventory?: number | undefined,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined,
 	/** The date and time when the product was last modified.
 A product's `updatedAt` value can change for different reasons. For example, if an order
 is placed for a product that has inventory tracking set up, then the inventory adjustment
@@ -11002,9 +13541,9 @@ This is useful for converting a user’s selection of product options into a sin
 If there is not a variant for the selected options, `null` will be returned.
  */
 	variantBySelectedOptions?: ModelTypes["ProductVariant"] | undefined,
-	/** List of the product’s variants. */
+	/** A list of [variants](/docs/api/storefront/latest/objects/ProductVariant) that are associated with the product. */
 	variants: ModelTypes["ProductVariantConnection"],
-	/** The product’s vendor name. */
+	/** The name of the product's vendor. */
 	vendor: string
 };
 	["ProductCollectionSortKeys"]:ProductCollectionSortKeys;
@@ -11028,7 +13567,10 @@ If there is not a variant for the selected options, `null` will be returned.
 	/** The item at the end of ProductEdge. */
 	node: ModelTypes["Product"]
 };
-	/** A filter used to view a subset of products in a collection. */
+	/** The input fields for a filter used to view a subset of products in a collection.
+By default, the `available` and `price` filters are enabled. Filters are customized with the Shopify Search & Discovery app.
+Learn more about [customizing storefront filtering](https://help.shopify.com/manual/online-store/themes/customizing-themes/storefront-filters).
+ */
 ["ProductFilter"]: {
 	/** Filter on if the product is available for sale. */
 	available?: boolean | undefined,
@@ -11054,7 +13596,7 @@ Variants are selected based on permutations of these options.
 255 characters limit each.
  */
 ["ProductOption"]: {
-		/** A globally-unique identifier. */
+		/** A globally-unique ID. */
 	id: string,
 	/** The product option’s name. */
 	name: string,
@@ -11068,8 +13610,10 @@ Variants are selected based on permutations of these options.
 	/** The lowest variant's price. */
 	minVariantPrice: ModelTypes["MoneyV2"]
 };
+	["ProductRecommendationIntent"]:ProductRecommendationIntent;
 	["ProductSortKeys"]:ProductSortKeys;
-	/** A product variant represents a different version of a product, such as differing sizes or differing colors. */
+	/** A product variant represents a different version of a product, such as differing sizes or differing colors.
+ */
 ["ProductVariant"]: {
 		/** Indicates if the product variant is available for sale. */
 	availableForSale: boolean,
@@ -11081,15 +13625,13 @@ Variants are selected based on permutations of these options.
 	compareAtPriceV2?: ModelTypes["MoneyV2"] | undefined,
 	/** Whether a product is out of stock but still available for purchase (used for backorders). */
 	currentlyNotInStock: boolean,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Image associated with the product variant. This field falls back to the product image if no image is available.
- */
+	/** Image associated with the product variant. This field falls back to the product image if no image is available. */
 	image?: ModelTypes["Image"] | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** The product variant’s price. */
 	price: ModelTypes["MoneyV2"],
@@ -11099,6 +13641,10 @@ Variants are selected based on permutations of these options.
 	product: ModelTypes["Product"],
 	/** The total sellable quantity of the variant for online sales channels. */
 	quantityAvailable?: number | undefined,
+	/** A list of quantity breaks for the product variant. */
+	quantityPriceBreaks: ModelTypes["QuantityPriceBreakConnection"],
+	/** The quantity rule for the product variant in a given context. */
+	quantityRule: ModelTypes["QuantityRule"],
 	/** Whether a customer needs to provide a shipping address when placing an order for the product variant. */
 	requiresShipping: boolean,
 	/** List of product options applied to the variant. */
@@ -11109,6 +13655,8 @@ Variants are selected based on permutations of these options.
 	sku?: string | undefined,
 	/** The in-store pickup availability of this variant by location. */
 	storeAvailability: ModelTypes["StoreAvailabilityConnection"],
+	/** Whether tax is charged when the product variant is sold. */
+	taxable: boolean,
 	/** The product variant’s title. */
 	title: string,
 	/** The unit price value for the variant based on the variant's measurement. */
@@ -11139,9 +13687,68 @@ Variants are selected based on permutations of these options.
 	node: ModelTypes["ProductVariant"]
 };
 	["ProductVariantSortKeys"]:ProductVariantSortKeys;
+	/** Represents information about the buyer that is interacting with the cart. */
+["PurchasingCompany"]: {
+		/** The company associated to the order or draft order. */
+	company: ModelTypes["Company"],
+	/** The company contact associated to the order or draft order. */
+	contact?: ModelTypes["CompanyContact"] | undefined,
+	/** The company location associated to the order or draft order. */
+	location: ModelTypes["CompanyLocation"]
+};
+	/** Quantity price breaks lets you offer different rates that are based on the
+amount of a specific variant being ordered.
+ */
+["QuantityPriceBreak"]: {
+		/** Minimum quantity required to reach new quantity break price.
+ */
+	minimumQuantity: number,
+	/** The price of variant after reaching the minimum quanity.
+ */
+	price: ModelTypes["MoneyV2"]
+};
+	/** An auto-generated type for paginating through multiple QuantityPriceBreaks.
+ */
+["QuantityPriceBreakConnection"]: {
+		/** A list of edges. */
+	edges: Array<ModelTypes["QuantityPriceBreakEdge"]>,
+	/** A list of the nodes contained in QuantityPriceBreakEdge. */
+	nodes: Array<ModelTypes["QuantityPriceBreak"]>,
+	/** Information to aid in pagination. */
+	pageInfo: ModelTypes["PageInfo"]
+};
+	/** An auto-generated type which holds one QuantityPriceBreak and a cursor during pagination.
+ */
+["QuantityPriceBreakEdge"]: {
+		/** A cursor for use in pagination. */
+	cursor: string,
+	/** The item at the end of QuantityPriceBreakEdge. */
+	node: ModelTypes["QuantityPriceBreak"]
+};
+	/** The quantity rule for the product variant in a given context.
+ */
+["QuantityRule"]: {
+		/** The value that specifies the quantity increment between minimum and maximum of the rule.
+Only quantities divisible by this value will be considered valid.
+
+The increment must be lower than or equal to the minimum and the maximum, and both minimum and maximum
+must be divisible by this value.
+ */
+	increment: number,
+	/** An optional value that defines the highest allowed quantity purchased by the customer.
+If defined, maximum must be lower than or equal to the minimum and must be a multiple of the increment.
+ */
+	maximum?: number | undefined,
+	/** The value that defines the lowest allowed quantity purchased by the customer.
+The minimum must be a multiple of the quantity rule's increment.
+ */
+	minimum: number
+};
 	/** The schema’s entry-point for queries. This acts as the public, top-level API from which all queries must start. */
 ["QueryRoot"]: {
-		/** List of the shop's articles. */
+		/** Fetch a specific Article by its ID. */
+	article?: ModelTypes["Article"] | undefined,
+	/** List of the shop's articles. */
 	articles: ModelTypes["ArticleConnection"],
 	/** Fetch a specific `Blog` by one of its unique attributes. */
 	blog?: ModelTypes["Blog"] | undefined,
@@ -11153,22 +13760,28 @@ Variants are selected based on permutations of these options.
 [Manage a cart with the Storefront API](https://shopify.dev/custom-storefronts/cart/manage).
  */
 	cart?: ModelTypes["Cart"] | undefined,
+	/** A poll for the status of the cart checkout completion and order creation.
+ */
+	cartCompletionAttempt?: ModelTypes["CartCompletionAttemptResult"] | undefined,
 	/** Fetch a specific `Collection` by one of its unique attributes. */
 	collection?: ModelTypes["Collection"] | undefined,
 	/** Find a collection by its handle. */
 	collectionByHandle?: ModelTypes["Collection"] | undefined,
 	/** List of the shop’s collections. */
 	collections: ModelTypes["CollectionConnection"],
-	/** Find a customer by its access token. */
+	/** The customer associated with the given access token. Tokens are obtained by using the
+[`customerAccessTokenCreate` mutation](https://shopify.dev/docs/api/storefront/latest/mutations/customerAccessTokenCreate).
+ */
 	customer?: ModelTypes["Customer"] | undefined,
 	/** Returns the localized experiences configured for the shop. */
 	localization: ModelTypes["Localization"],
 	/** List of the shop's locations that support in-store pickup.
 
 When sorting by distance, you must specify a location via the `near` argument.
+
  */
 	locations: ModelTypes["LocationConnection"],
-	/** A storefront menu. */
+	/** Retrieve a [navigation menu](https://help.shopify.com/manual/online-store/menus-and-links) by its handle. */
 	menu?: ModelTypes["Menu"] | undefined,
 	/** Fetch a specific Metaobject by one of its unique identifiers. */
 	metaobject?: ModelTypes["Metaobject"] | undefined,
@@ -11184,6 +13797,8 @@ When sorting by distance, you must specify a location via the `near` argument.
 	pageByHandle?: ModelTypes["Page"] | undefined,
 	/** List of the shop's pages. */
 	pages: ModelTypes["PageConnection"],
+	/** List of the predictive search results. */
+	predictiveSearch?: ModelTypes["PredictiveSearchResult"] | undefined,
 	/** Fetch a specific `Product` by one of its unique attributes. */
 	product?: ModelTypes["Product"] | undefined,
 	/** Find a product by its handle. */
@@ -11199,10 +13814,12 @@ Additional access scope required: unauthenticated_read_product_tags.
 	productTags: ModelTypes["StringConnection"],
 	/** List of product types for the shop's products that are published to your app. */
 	productTypes: ModelTypes["StringConnection"],
-	/** List of the shop’s products. */
+	/** Returns a list of the shop's products. For storefront search, use the [`search`](https://shopify.dev/docs/api/storefront/latest/queries/search) query. */
 	products: ModelTypes["ProductConnection"],
 	/** The list of public Storefront API versions, including supported, release candidate and unstable versions. */
 	publicApiVersions: Array<ModelTypes["ApiVersion"]>,
+	/** List of the search results. */
+	search: ModelTypes["SearchResultItemConnection"],
 	/** The shop associated with the storefront access token. */
 	shop: ModelTypes["Shop"],
 	/** A list of redirects for a shop. */
@@ -11230,6 +13847,45 @@ was created by a Shopify Script.
 	/** The value of the discount application. */
 	value: ModelTypes["PricingValue"]
 };
+	["SearchPrefixQueryType"]:SearchPrefixQueryType;
+	/** A search query suggestion. */
+["SearchQuerySuggestion"]: {
+		/** The text of the search query suggestion with highlighted HTML tags. */
+	styledText: string,
+	/** The text of the search query suggestion. */
+	text: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined
+};
+	/** A search result that matches the search query.
+ */
+["SearchResultItem"]:ModelTypes["Article"] | ModelTypes["Page"] | ModelTypes["Product"];
+	/** An auto-generated type for paginating through multiple SearchResultItems.
+ */
+["SearchResultItemConnection"]: {
+		/** A list of edges. */
+	edges: Array<ModelTypes["SearchResultItemEdge"]>,
+	/** A list of the nodes contained in SearchResultItemEdge. */
+	nodes: Array<ModelTypes["SearchResultItem"]>,
+	/** Information to aid in pagination. */
+	pageInfo: ModelTypes["PageInfo"],
+	/** A list of available filters. */
+	productFilters: Array<ModelTypes["Filter"]>,
+	/** The total number of results. */
+	totalCount: number
+};
+	/** An auto-generated type which holds one SearchResultItem and a cursor during pagination.
+ */
+["SearchResultItemEdge"]: {
+		/** A cursor for use in pagination. */
+	cursor: string,
+	/** The item at the end of SearchResultItemEdge. */
+	node: ModelTypes["SearchResultItem"]
+};
+	["SearchSortKeys"]:SearchSortKeys;
+	["SearchType"]:SearchType;
+	["SearchUnavailableProductsType"]:SearchUnavailableProductsType;
+	["SearchableField"]:SearchableField;
 	/** Properties used by customers to select a product variant.
 Products can have multiple options, like different sizes or colors.
  */
@@ -11239,7 +13895,7 @@ Products can have multiple options, like different sizes or colors.
 	/** The product option’s value. */
 	value: string
 };
-	/** Specifies the input fields required for a selected option. */
+	/** The input fields required for a selected option. */
 ["SelectedOptionInput"]: {
 	/** The product option’s name. */
 	name: string,
@@ -11252,7 +13908,7 @@ Products can have multiple options, like different sizes or colors.
 	checkoutCharge: ModelTypes["SellingPlanCheckoutCharge"],
 	/** The description of the selling plan. */
 	description?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The name of the selling plan. For example, '6 weeks of prepaid granola, delivered weekly'. */
 	name: string,
@@ -11422,12 +14078,11 @@ Individual selling plans contribute their options to the associated selling plan
 	brand?: ModelTypes["Brand"] | undefined,
 	/** A description of the shop. */
 	description?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: ModelTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<ModelTypes["Metafield"] | undefined>,
 	/** A string representing the way currency is formatted when the currency isn’t specified. */
 	moneyFormat: string,
@@ -11450,13 +14105,21 @@ Individual selling plans contribute their options to the associated selling plan
 	/** The shop’s terms of service. */
 	termsOfService?: ModelTypes["ShopPolicy"] | undefined
 };
+	/** The input fields for submitting Shop Pay payment method information for checkout.
+ */
+["ShopPayWalletContentInput"]: {
+	/** The customer's billing address. */
+	billingAddress: ModelTypes["MailingAddressInput"],
+	/** Session token for transaction. */
+	sessionToken: string
+};
 	/** Policy that a merchant has configured for their store, such as their refund or privacy policy. */
 ["ShopPolicy"]: {
 		/** Policy text, maximum size of 64kb. */
 	body: string,
 	/** Policy’s handle. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** Policy’s title. */
 	title: string,
@@ -11472,7 +14135,7 @@ Otherwise, the policy will return the merchant-configured value.
 	body: string,
 	/** The handle of the policy. */
 	handle: string,
-	/** The unique identifier of the policy. A default policy doesn't have an ID. */
+	/** The unique ID of the policy. A default policy doesn't have an ID. */
 	id?: string | undefined,
 	/** The title of the policy. */
 	title: string,
@@ -11488,7 +14151,9 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	/** The location where this product variant is stocked at. */
 	location: ModelTypes["Location"],
 	/** Returns the estimated amount of time it takes for pickup to be ready (Example: Usually ready in 24 hours). */
-	pickUpTime: string
+	pickUpTime: string,
+	/** The quantity of the product variant in-stock at this location. */
+	quantityAvailable: number
 };
 	/** An auto-generated type for paginating through multiple StoreAvailabilities.
  */
@@ -11508,7 +14173,7 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	/** The item at the end of StoreAvailabilityEdge. */
 	node: ModelTypes["StoreAvailability"]
 };
-	/** An auto-generated type for paginating through a list of Strings.
+	/** An auto-generated type for paginating through multiple Strings.
  */
 ["StringConnection"]: {
 		/** A list of edges. */
@@ -11524,6 +14189,46 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	/** The item at the end of StringEdge. */
 	node: string
 };
+	/** An error that occurred during cart submit for completion. */
+["SubmissionError"]: {
+		/** The error code. */
+	code: ModelTypes["SubmissionErrorCode"],
+	/** The error message. */
+	message?: string | undefined
+};
+	["SubmissionErrorCode"]:SubmissionErrorCode;
+	/** Cart submit for checkout completion is successful. */
+["SubmitAlreadyAccepted"]: {
+		/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId: string
+};
+	/** Cart submit for checkout completion failed. */
+["SubmitFailed"]: {
+		/** The URL of the checkout for the cart. */
+	checkoutUrl?: ModelTypes["URL"] | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	errors: Array<ModelTypes["SubmissionError"]>
+};
+	/** Cart submit for checkout completion is already accepted. */
+["SubmitSuccess"]: {
+		/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId: string
+};
+	/** Cart submit for checkout completion is throttled. */
+["SubmitThrottled"]: {
+		/** UTC date time string that indicates the time after which clients should make their next
+poll request. Any poll requests sent before this time will be ignored. Use this value to schedule the
+next poll request.
+ */
+	pollAfter: ModelTypes["DateTime"]
+};
+	/** Color and image for visual representation. */
+["Swatch"]: {
+		/** The swatch color. */
+	color?: ModelTypes["Color"] | undefined,
+	/** The swatch image. */
+	image?: ModelTypes["MediaImage"] | undefined
+};
 	/** Specifies the fields required to complete a checkout with
 a tokenized payment.
  */
@@ -11536,13 +14241,15 @@ a tokenized payment.
 	billingAddress: ModelTypes["MailingAddressInput"],
 	/** A simple string or JSON containing the required payment data for the tokenized payment. */
 	paymentData: string,
-	/** Whether to execute the payment in test mode, if possible. Test mode is not supported in production stores. Defaults to `false`. */
+	/** Whether to execute the payment in test mode, if possible. Test mode isn't supported in production stores. Defaults to `false`. */
 	test?: boolean | undefined,
 	/** Public Hash Key used for AndroidPay payments only. */
 	identifier?: string | undefined,
 	/** The type of payment token. */
 	type: ModelTypes["PaymentTokenType"]
 };
+	/** Represents a resource that you can track the origin of the search traffic. */
+["Trackable"]: ModelTypes["Article"] | ModelTypes["Collection"] | ModelTypes["Page"] | ModelTypes["Product"] | ModelTypes["SearchQuerySuggestion"];
 	/** An object representing exchange of money for a product or service. */
 ["Transaction"]: {
 		/** The amount of money that the transaction was for. */
@@ -11563,8 +14270,8 @@ a tokenized payment.
 	/** Represents an [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986) and
 [RFC 3987](https://datatracker.ietf.org/doc/html/rfc3987)-compliant URI string.
 
-For example, `"https://johns-apparel.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
-(`johns-apparel.myshopify.com`).
+For example, `"https://example.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
+(`example.myshopify.com`).
  */
 ["URL"]:any;
 	/** The measurement used to calculate a unit price for a product variant (e.g. $9.99 / 100ml).
@@ -11623,7 +14330,7 @@ Example value: `"50"`.
 	/** The error message. */
 	message: string
 };
-	/** A filter used to view a subset of products in a collection matching a specific variant option. */
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific variant option. */
 ["VariantOptionFilter"]: {
 	/** The name of the variant option to filter on. */
 	name: string,
@@ -11634,10 +14341,12 @@ Example value: `"50"`.
 ["Video"]: {
 		/** A word or phrase to share the nature or contents of a media. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The media content type. */
 	mediaContentType: ModelTypes["MediaContentType"],
+	/** The presentation for a media. */
+	presentation?: ModelTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: ModelTypes["Image"] | undefined,
 	/** The sources for a video. */
@@ -11672,6 +14381,34 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	/** Whether the version is actively supported by Shopify. Supported API versions are guaranteed to be stable. Unsupported API versions include unstable, release candidate, and end-of-life versions that are marked as unsupported. For more information, refer to [Versioning](https://shopify.dev/api/usage/versioning). */
 	supported: boolean
 };
+	/** The input fields for submitting Apple Pay payment method information for checkout.
+ */
+["ApplePayWalletContentInput"]: {
+		/** The customer's billing address. */
+	billingAddress: GraphQLTypes["MailingAddressInput"],
+	/** The data for the Apple Pay wallet. */
+	data: string,
+	/** The header data for the Apple Pay wallet. */
+	header: GraphQLTypes["ApplePayWalletHeaderInput"],
+	/** The last digits of the card used to create the payment. */
+	lastDigits?: string | undefined,
+	/** The signature for the Apple Pay wallet. */
+	signature: string,
+	/** The version for the Apple Pay wallet. */
+	version: string
+};
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["ApplePayWalletHeaderInput"]: {
+		/** The application data for the Apple Pay wallet. */
+	applicationData?: string | undefined,
+	/** The ephemeral public key for the Apple Pay wallet. */
+	ephemeralPublicKey: string,
+	/** The public key hash for the Apple Pay wallet. */
+	publicKeyHash: string,
+	/** The transaction ID for the Apple Pay wallet. */
+	transactionId: string
+};
 	/** Details about the gift card used on the checkout. */
 ["AppliedGiftCard"]: {
 	__typename: "AppliedGiftCard",
@@ -11683,7 +14420,7 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	balance: GraphQLTypes["MoneyV2"],
 	/** The amount left on the gift card. */
 	balanceV2: GraphQLTypes["MoneyV2"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The last characters of the gift card. */
 	lastCharacters: string,
@@ -11709,17 +14446,15 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	excerpt?: string | undefined,
 	/** The excerpt of the article, complete with HTML formatting. */
 	excerptHtml?: GraphQLTypes["HTML"] | undefined,
-	/** A human-friendly unique string for the Article automatically generated from its title.
- */
+	/** A human-friendly unique string for the Article automatically generated from its title. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The image associated with the article. */
 	image?: GraphQLTypes["Image"] | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: GraphQLTypes["URL"] | undefined,
@@ -11727,10 +14462,13 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 	publishedAt: GraphQLTypes["DateTime"],
 	/** The article’s SEO information. */
 	seo?: GraphQLTypes["SEO"] | undefined,
-	/** A categorization that a article can be tagged with. */
+	/** A categorization that a article can be tagged with.
+ */
 	tags: Array<string>,
 	/** The article’s name. */
-	title: string
+	title: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined
 };
 	/** The author of an article. */
 ["ArticleAuthor"]: {
@@ -11768,15 +14506,17 @@ Versions are commonly referred to by their handle (for example, `2021-10`).
 };
 	/** The set of valid sort keys for the Article query. */
 ["ArticleSortKeys"]: ArticleSortKeys;
-	/** Represents a generic custom attribute. */
+	/** Represents a generic custom attribute, such as whether an order is a customer's first. */
 ["Attribute"]: {
 	__typename: "Attribute",
-	/** Key or name of the attribute. */
+	/** The key or name of the attribute. For example, `"customersFirstOrder"`.
+ */
 	key: string,
-	/** Value of the attribute. */
+	/** The value of the attribute. For example, `"true"`.
+ */
 	value?: string | undefined
 };
-	/** Specifies the input fields required for an attribute. */
+	/** The input fields for an attribute. */
 ["AttributeInput"]: {
 		/** Key or name of the attribute. */
 	key: string,
@@ -11809,6 +14549,50 @@ This field should be polled until its value becomes `true`.
 	/** The fetched shipping rates. `null` until the `ready` field is `true`. */
 	shippingRates?: Array<GraphQLTypes["ShippingRate"]> | undefined
 };
+	/** Represents a cart line common fields. */
+["BaseCartLine"]: {
+	__typename:"CartLine" | "ComponentizableCartLine",
+	/** An attribute associated with the cart line. */
+	attribute?: GraphQLTypes["Attribute"] | undefined,
+	/** The attributes associated with the cart line. Attributes are represented as key-value pairs. */
+	attributes: Array<GraphQLTypes["Attribute"]>,
+	/** The cost of the merchandise that the buyer will pay for at checkout. The costs are subject to change and changes will be reflected at checkout. */
+	cost: GraphQLTypes["CartLineCost"],
+	/** The discounts that have been applied to the cart line. */
+	discountAllocations: Array<GraphQLTypes["CartDiscountAllocation"]>,
+	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
+	estimatedCost: GraphQLTypes["CartLineEstimatedCost"],
+	/** A globally-unique ID. */
+	id: string,
+	/** The merchandise that the buyer intends to purchase. */
+	merchandise: GraphQLTypes["Merchandise"],
+	/** The quantity of the merchandise that the customer intends to purchase. */
+	quantity: number,
+	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
+	sellingPlanAllocation?: GraphQLTypes["SellingPlanAllocation"] | undefined
+	['...on CartLine']: '__union' & GraphQLTypes["CartLine"];
+	['...on ComponentizableCartLine']: '__union' & GraphQLTypes["ComponentizableCartLine"];
+};
+	/** An auto-generated type for paginating through multiple BaseCartLines.
+ */
+["BaseCartLineConnection"]: {
+	__typename: "BaseCartLineConnection",
+	/** A list of edges. */
+	edges: Array<GraphQLTypes["BaseCartLineEdge"]>,
+	/** A list of the nodes contained in BaseCartLineEdge. */
+	nodes: Array<GraphQLTypes["BaseCartLine"]>,
+	/** Information to aid in pagination. */
+	pageInfo: GraphQLTypes["PageInfo"]
+};
+	/** An auto-generated type which holds one BaseCartLine and a cursor during pagination.
+ */
+["BaseCartLineEdge"]: {
+	__typename: "BaseCartLineEdge",
+	/** A cursor for use in pagination. */
+	cursor: string,
+	/** The item at the end of BaseCartLineEdge. */
+	node: GraphQLTypes["BaseCartLine"]
+};
 	/** An online store blog. */
 ["Blog"]: {
 	__typename: "Blog",
@@ -11821,12 +14605,11 @@ This field should be polled until its value becomes `true`.
 	/** A human-friendly unique string for the Blog automatically generated from its title.
  */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: GraphQLTypes["URL"] | undefined,
@@ -11857,7 +14640,7 @@ This field should be polled until its value becomes `true`.
 };
 	/** The set of valid sort keys for the Blog query. */
 ["BlogSortKeys"]: BlogSortKeys;
-	/** The store's branding configuration.
+	/** The store's [branding configuration](https://help.shopify.com/en/manual/promoting-marketing/managing-brand-assets).
  */
 ["Brand"]: {
 	__typename: "Brand",
@@ -11892,6 +14675,14 @@ This field should be polled until its value becomes `true`.
 	/** The shop's secondary brand colors. */
 	secondary: Array<GraphQLTypes["BrandColorGroup"]>
 };
+	/** The input fields for obtaining the buyer's identity.
+ */
+["BuyerInput"]: {
+		/** The customer access token retrieved from the [Customer Accounts API](https://shopify.dev/docs/api/customer#step-obtain-access-token). */
+	customerAccessToken: string,
+	/** The identifier of the company location. */
+	companyLocationId?: string | undefined
+};
 	/** Card brand, such as Visa or Mastercard, which can be used for payments. */
 ["CardBrand"]: CardBrand;
 	/** A cart represents the merchandise that a buyer intends to purchase,
@@ -11905,7 +14696,7 @@ during a customer's session.
 	attribute?: GraphQLTypes["Attribute"] | undefined,
 	/** The attributes associated with the cart. Attributes are represented as key-value pairs. */
 	attributes: Array<GraphQLTypes["Attribute"]>,
-	/** Information about the buyer that is interacting with the cart. */
+	/** Information about the buyer that's interacting with the cart. */
 	buyerIdentity: GraphQLTypes["CartBuyerIdentity"],
 	/** The URL of the checkout for the cart. */
 	checkoutUrl: GraphQLTypes["URL"],
@@ -11919,20 +14710,19 @@ delivery address preference or the default address of the logged-in customer.
 	deliveryGroups: GraphQLTypes["CartDeliveryGroupConnection"],
 	/** The discounts that have been applied to the entire cart. */
 	discountAllocations: Array<GraphQLTypes["CartDiscountAllocation"]>,
-	/** The case-insensitive discount codes that the customer added at checkout.
- */
+	/** The case-insensitive discount codes that the customer added at checkout. */
 	discountCodes: Array<GraphQLTypes["CartDiscountCode"]>,
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated costs are subject to change and changes will be reflected at checkout.
-The `estimatedCost` field uses the `buyerIdentity` field to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated costs are subject to change and changes will be reflected at checkout. The `estimatedCost` field uses the `buyerIdentity` field to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 	estimatedCost: GraphQLTypes["CartEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** A list of lines containing information about the items the customer intends to purchase. */
-	lines: GraphQLTypes["CartLineConnection"],
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	lines: GraphQLTypes["BaseCartLineConnection"],
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: GraphQLTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer. */
 	note?: string | undefined,
 	/** The total number of items in the cart. */
 	totalQuantity: number,
@@ -11965,12 +14755,28 @@ The `estimatedCost` field uses the `buyerIdentity` field to determine
 	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
 The rank of the preferences is determined by the order of the addresses in the array. Preferences
 can be used to populate relevant fields in the checkout flow.
+
+As of the `2025-01` release, `buyerIdentity.deliveryAddressPreferences` is deprecated.
+Delivery addresses are now part of the `CartDelivery` object and managed with three new mutations:
+- `cartDeliveryAddressAdd`
+- `cartDeliveryAddressUpdate`
+- `cartDeliveryAddressDelete`
  */
 	deliveryAddressPreferences: Array<GraphQLTypes["DeliveryAddress"]>,
-	/** The email address of the buyer that is interacting with the cart. */
+	/** The email address of the buyer that's interacting with the cart. */
 	email?: string | undefined,
-	/** The phone number of the buyer that is interacting with the cart. */
-	phone?: string | undefined
+	/** The phone number of the buyer that's interacting with the cart. */
+	phone?: string | undefined,
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
+ */
+	preferences?: GraphQLTypes["CartPreferences"] | undefined,
+	/** The purchasing company associated with the cart. */
+	purchasingCompany?: GraphQLTypes["PurchasingCompany"] | undefined,
+	/** A set of wallet preferences tied to the buyer that is interacting with the cart.
+Preferences can be used to populate relevant payment fields in the checkout flow.
+ */
+	walletPreferences: Array<string>
 };
 	/** Specifies the input fields to update the buyer information associated with a cart.
 Buyer identity is used to determine
@@ -11982,15 +14788,16 @@ and should match the customer's shipping address.
 	email?: string | undefined,
 	/** The phone number of the buyer that is interacting with the cart. */
 	phone?: string | undefined,
+	/** The company location of the buyer that is interacting with the cart. */
+	companyLocationId?: string | undefined,
 	/** The country where the buyer is located. */
 	countryCode?: GraphQLTypes["CountryCode"] | undefined,
 	/** The access token used to identify the customer associated with the cart. */
 	customerAccessToken?: string | undefined,
-	/** An ordered set of delivery addresses tied to the buyer that is interacting with the cart.
-The rank of the preferences is determined by the order of the addresses in the array. Preferences
-can be used to populate relevant fields in the checkout flow.
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection.
+Preferences are not synced back to the cart if they are overwritten.
  */
-	deliveryAddressPreferences?: Array<GraphQLTypes["DeliveryAddressInput"]> | undefined
+	preferences?: GraphQLTypes["CartPreferencesInput"] | undefined
 };
 	/** Return type for `cartBuyerIdentityUpdate` mutation. */
 ["CartBuyerIdentityUpdatePayload"]: {
@@ -12000,6 +14807,9 @@ can be used to populate relevant fields in the checkout flow.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["CartUserError"]>
 };
+	/** Represents how credit card details are provided for a direct payment.
+ */
+["CartCardSource"]: CartCardSource;
 	/** The discount that has been applied to the cart line using a discount code. */
 ["CartCodeDiscountAllocation"]: {
 	__typename: "CartCodeDiscountAllocation",
@@ -12007,6 +14817,55 @@ can be used to populate relevant fields in the checkout flow.
 	code: string,
 	/** The discounted amount that has been applied to the cart line. */
 	discountedAmount: GraphQLTypes["MoneyV2"]
+};
+	/** The completion action to checkout a cart. */
+["CartCompletionAction"]:{
+        	__typename:"CompletePaymentChallenge"
+        	['...on CompletePaymentChallenge']: '__union' & GraphQLTypes["CompletePaymentChallenge"];
+};
+	/** The required completion action to checkout a cart. */
+["CartCompletionActionRequired"]: {
+	__typename: "CartCompletionActionRequired",
+	/** The action required to complete the cart completion attempt. */
+	action?: GraphQLTypes["CartCompletionAction"] | undefined,
+	/** The ID of the cart completion attempt. */
+	id: string
+};
+	/** The result of a cart completion attempt. */
+["CartCompletionAttemptResult"]:{
+        	__typename:"CartCompletionActionRequired" | "CartCompletionFailed" | "CartCompletionProcessing" | "CartCompletionSuccess"
+        	['...on CartCompletionActionRequired']: '__union' & GraphQLTypes["CartCompletionActionRequired"];
+	['...on CartCompletionFailed']: '__union' & GraphQLTypes["CartCompletionFailed"];
+	['...on CartCompletionProcessing']: '__union' & GraphQLTypes["CartCompletionProcessing"];
+	['...on CartCompletionSuccess']: '__union' & GraphQLTypes["CartCompletionSuccess"];
+};
+	/** A failed completion to checkout a cart. */
+["CartCompletionFailed"]: {
+	__typename: "CartCompletionFailed",
+	/** The errors that caused the checkout to fail. */
+	errors: Array<GraphQLTypes["CompletionError"]>,
+	/** The ID of the cart completion attempt. */
+	id: string
+};
+	/** A cart checkout completion that's still processing. */
+["CartCompletionProcessing"]: {
+	__typename: "CartCompletionProcessing",
+	/** The ID of the cart completion attempt. */
+	id: string,
+	/** The number of milliseconds to wait before polling again. */
+	pollDelay: number
+};
+	/** A successful completion to checkout a cart and a created order. */
+["CartCompletionSuccess"]: {
+	__typename: "CartCompletionSuccess",
+	/** The date and time when the job completed. */
+	completedAt?: GraphQLTypes["DateTime"] | undefined,
+	/** The ID of the cart completion attempt. */
+	id: string,
+	/** The ID of the order that's created in Shopify. */
+	orderId: string,
+	/** The URL of the order confirmation in Shopify. */
+	orderUrl: GraphQLTypes["URL"]
 };
 	/** The costs that the buyer will pay at checkout.
 The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity) to determine
@@ -12049,15 +14908,42 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	/** The title of the allocated discount. */
 	title: string
 };
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreference"]: {
+	__typename: "CartDeliveryCoordinatesPreference",
+	/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode: GraphQLTypes["CountryCode"],
+	/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude: number,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude: number
+};
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+["CartDeliveryCoordinatesPreferenceInput"]: {
+		/** The geographic latitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	latitude: number,
+	/** The geographic longitude for a given location. Coordinates are required in order to set pickUpHandle for pickup points. */
+	longitude: number,
+	/** The two-letter code for the country of the preferred location.
+
+For example, US.
+ */
+	countryCode: GraphQLTypes["CountryCode"]
+};
 	/** Information about the options available for one or more line items to be delivered to a specific address. */
 ["CartDeliveryGroup"]: {
 	__typename: "CartDeliveryGroup",
 	/** A list of cart lines for the delivery group. */
-	cartLines: GraphQLTypes["CartLineConnection"],
+	cartLines: GraphQLTypes["BaseCartLineConnection"],
 	/** The destination address for the delivery group. */
 	deliveryAddress: GraphQLTypes["MailingAddress"],
 	/** The delivery options available for the delivery group. */
 	deliveryOptions: Array<GraphQLTypes["CartDeliveryOption"]>,
+	/** The type of merchandise in the delivery group. */
+	groupType: GraphQLTypes["CartDeliveryGroupType"],
 	/** The ID for the delivery group. */
 	id: string,
 	/** The selected delivery option for the delivery group. */
@@ -12083,6 +14969,9 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	/** The item at the end of CartDeliveryGroupEdge. */
 	node: GraphQLTypes["CartDeliveryGroup"]
 };
+	/** Defines what type of merchandise is in the delivery group.
+ */
+["CartDeliveryGroupType"]: CartDeliveryGroupType;
 	/** Information about a delivery option. */
 ["CartDeliveryOption"]: {
 	__typename: "CartDeliveryOption",
@@ -12098,6 +14987,44 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 	handle: string,
 	/** The title of the delivery option. */
 	title?: string | undefined
+};
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartDeliveryPreference"]: {
+	__typename: "CartDeliveryPreference",
+	/** Preferred location used to find the closest pick up point based on coordinates. */
+	coordinates?: GraphQLTypes["CartDeliveryCoordinatesPreference"] | undefined,
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+	deliveryMethod: Array<GraphQLTypes["PreferenceDeliveryMethodType"]>,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+ */
+	pickupHandle: Array<string>
+};
+	/** Delivery preferences can be used to prefill the delivery section at checkout. */
+["CartDeliveryPreferenceInput"]: {
+		/** The preferred delivery methods such as shipping, local pickup or through pickup points.
+
+The input must not contain more than `250` values. */
+	deliveryMethod?: Array<GraphQLTypes["PreferenceDeliveryMethodType"]> | undefined,
+	/** The pickup handle prefills checkout fields with the location for either local pickup or pickup points delivery methods.
+It accepts both location ID for local pickup and external IDs for pickup points.
+
+The input must not contain more than `250` values. */
+	pickupHandle?: Array<string> | undefined,
+	/** The coordinates of a delivery location in order of preference. */
+	coordinates?: GraphQLTypes["CartDeliveryCoordinatesPreferenceInput"] | undefined
+};
+	/** The input fields for submitting direct payment method information for checkout.
+ */
+["CartDirectPaymentMethodInput"]: {
+		/** The customer's billing address. */
+	billingAddress: GraphQLTypes["MailingAddressInput"],
+	/** The session ID for the direct payment method used to create the payment. */
+	sessionId: string,
+	/** The source of the credit card payment. */
+	cardSource?: GraphQLTypes["CartCardSource"] | undefined
 };
 	/** The discounts that have been applied to the cart line. */
 ["CartDiscountAllocation"]: {
@@ -12126,12 +15053,7 @@ The cart cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/refe
 };
 	/** Possible error codes that can be returned by `CartUserError`. */
 ["CartErrorCode"]: CartErrorCode;
-	/** The estimated costs that the buyer will pay at checkout.
-The estimated cost uses
-[`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity)
-to determine
-[international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing).
- */
+	/** The estimated costs that the buyer will pay at checkout. The estimated cost uses [`CartBuyerIdentity`](https://shopify.dev/api/storefront/reference/cart/cartbuyeridentity) to determine [international pricing](https://shopify.dev/custom-storefronts/internationalization/international-pricing). */
 ["CartEstimatedCost"]: {
 	__typename: "CartEstimatedCost",
 	/** The estimated amount, before taxes and discounts, for the customer to pay at checkout. The checkout charge amount doesn't include any deferred payments that'll be paid at a later date. If the cart has no deferred payments, then the checkout charge amount is equivalent to`subtotal_amount`. */
@@ -12145,22 +15067,50 @@ to determine
 	/** The estimated tax amount for the customer to pay at checkout. */
 	totalTaxAmount?: GraphQLTypes["MoneyV2"] | undefined
 };
-	/** Specifies the input fields to create a cart. */
+	/** The input fields for submitting a billing address without a selected payment method.
+ */
+["CartFreePaymentMethodInput"]: {
+		/** The customer's billing address. */
+	billingAddress: GraphQLTypes["MailingAddressInput"]
+};
+	/** The input fields to create a cart. */
 ["CartInput"]: {
-		/** An array of key-value pairs that contains additional information about the cart. */
+		/** An array of key-value pairs that contains additional information about the cart.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<GraphQLTypes["AttributeInput"]> | undefined,
-	/** A list of merchandise lines to add to the cart. */
+	/** A list of merchandise lines to add to the cart.
+
+The input must not contain more than `250` values. */
 	lines?: Array<GraphQLTypes["CartLineInput"]> | undefined,
 	/** The case-insensitive discount codes that the customer added at checkout.
- */
+
+The input must not contain more than `250` values. */
 	discountCodes?: Array<string> | undefined,
-	/** A note that is associated with the cart. For example, the note can be a personalized message to the buyer. */
+	/** A note that's associated with the cart. For example, the note can be a personalized message to the buyer.
+ */
 	note?: string | undefined,
 	/** The customer associated with the cart. Used to determine [international pricing]
 (https://shopify.dev/custom-storefronts/internationalization/international-pricing).
 Buyer identity should match the customer's shipping address.
  */
-	buyerIdentity?: GraphQLTypes["CartBuyerIdentityInput"] | undefined
+	buyerIdentity?: GraphQLTypes["CartBuyerIdentityInput"] | undefined,
+	/** The metafields to associate with this cart.
+
+The input must not contain more than `250` values. */
+	metafields?: Array<GraphQLTypes["CartInputMetafieldInput"]> | undefined
+};
+	/** The input fields for a cart metafield value to set. */
+["CartInputMetafieldInput"]: {
+		/** The key name of the metafield. */
+	key: string,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string
 };
 	/** Represents information about the merchandise in the cart. */
 ["CartLine"]: {
@@ -12175,7 +15125,7 @@ Buyer identity should match the customer's shipping address.
 	discountAllocations: Array<GraphQLTypes["CartDiscountAllocation"]>,
 	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
 	estimatedCost: GraphQLTypes["CartLineEstimatedCost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The merchandise that the buyer intends to purchase. */
 	merchandise: GraphQLTypes["Merchandise"],
@@ -12183,17 +15133,6 @@ Buyer identity should match the customer's shipping address.
 	quantity: number,
 	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
 	sellingPlanAllocation?: GraphQLTypes["SellingPlanAllocation"] | undefined
-};
-	/** An auto-generated type for paginating through multiple CartLines.
- */
-["CartLineConnection"]: {
-	__typename: "CartLineConnection",
-	/** A list of edges. */
-	edges: Array<GraphQLTypes["CartLineEdge"]>,
-	/** A list of the nodes contained in CartLineEdge. */
-	nodes: Array<GraphQLTypes["CartLine"]>,
-	/** Information to aid in pagination. */
-	pageInfo: GraphQLTypes["PageInfo"]
 };
 	/** The cost of the merchandise line that the buyer will pay at checkout. */
 ["CartLineCost"]: {
@@ -12207,16 +15146,8 @@ Buyer identity should match the customer's shipping address.
 	/** The total cost of the merchandise line. */
 	totalAmount: GraphQLTypes["MoneyV2"]
 };
-	/** An auto-generated type which holds one CartLine and a cursor during pagination.
+	/** The estimated cost of the merchandise line that the buyer will pay at checkout.
  */
-["CartLineEdge"]: {
-	__typename: "CartLineEdge",
-	/** A cursor for use in pagination. */
-	cursor: string,
-	/** The item at the end of CartLineEdge. */
-	node: GraphQLTypes["CartLine"]
-};
-	/** The estimated cost of the merchandise line that the buyer will pay at checkout. */
 ["CartLineEstimatedCost"]: {
 	__typename: "CartLineEstimatedCost",
 	/** The amount of the merchandise line. */
@@ -12228,28 +15159,32 @@ Buyer identity should match the customer's shipping address.
 	/** The estimated total cost of the merchandise line. */
 	totalAmount: GraphQLTypes["MoneyV2"]
 };
-	/** Specifies the input fields to create a merchandise line on a cart. */
+	/** The input fields to create a merchandise line on a cart. */
 ["CartLineInput"]: {
-		/** An array of key-value pairs that contains additional information about the merchandise line. */
+		/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<GraphQLTypes["AttributeInput"]> | undefined,
 	/** The quantity of the merchandise. */
 	quantity?: number | undefined,
-	/** The identifier of the merchandise that the buyer intends to purchase. */
+	/** The ID of the merchandise that the buyer intends to purchase. */
 	merchandiseId: string,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined
 };
-	/** Specifies the input fields to update a line item on a cart. */
+	/** The input fields to update a line item on a cart. */
 ["CartLineUpdateInput"]: {
-		/** The identifier of the merchandise line. */
+		/** The ID of the merchandise line. */
 	id: string,
 	/** The quantity of the line item. */
 	quantity?: number | undefined,
-	/** The identifier of the merchandise for the line item. */
+	/** The ID of the merchandise for the line item. */
 	merchandiseId?: string | undefined,
-	/** An array of key-value pairs that contains additional information about the merchandise line. */
+	/** An array of key-value pairs that contains additional information about the merchandise line.
+
+The input must not contain more than `250` values. */
 	attributes?: Array<GraphQLTypes["AttributeInput"]> | undefined,
-	/** The identifier of the selling plan that the merchandise is being purchased with. */
+	/** The ID of the selling plan that the merchandise is being purchased with. */
 	sellingPlanId?: string | undefined
 };
 	/** Return type for `cartLinesAdd` mutation. */
@@ -12276,6 +15211,45 @@ Buyer identity should match the customer's shipping address.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["CartUserError"]>
 };
+	/** The input fields to delete a cart metafield. */
+["CartMetafieldDeleteInput"]: {
+		/** The ID of the cart resource. */
+	ownerId: string,
+	/** The key name of the cart metafield. Can either be a composite key (`namespace.key`) or a simple key
+ that relies on the default app-reserved namespace.
+ */
+	key: string
+};
+	/** Return type for `cartMetafieldDelete` mutation. */
+["CartMetafieldDeletePayload"]: {
+	__typename: "CartMetafieldDeletePayload",
+	/** The ID of the deleted cart metafield. */
+	deletedId?: string | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<GraphQLTypes["MetafieldDeleteUserError"]>
+};
+	/** The input fields for a cart metafield value to set. */
+["CartMetafieldsSetInput"]: {
+		/** The ID of the cart resource. */
+	ownerId: string,
+	/** The key name of the cart metafield. */
+	key: string,
+	/** The data to store in the cart metafield. The data is always stored as a string, regardless of the metafield's type.
+ */
+	value: string,
+	/** The type of data that the cart metafield stores.
+The type of data must be a [supported type](https://shopify.dev/apps/metafields/types).
+ */
+	type: string
+};
+	/** Return type for `cartMetafieldsSet` mutation. */
+["CartMetafieldsSetPayload"]: {
+	__typename: "CartMetafieldsSetPayload",
+	/** The list of cart metafields that were set. */
+	metafields?: Array<GraphQLTypes["Metafield"]> | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<GraphQLTypes["MetafieldsSetUserError"]>
+};
 	/** Return type for `cartNoteUpdate` mutation. */
 ["CartNoteUpdatePayload"]: {
 	__typename: "CartNoteUpdatePayload",
@@ -12283,6 +15257,56 @@ Buyer identity should match the customer's shipping address.
 	cart?: GraphQLTypes["Cart"] | undefined,
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["CartUserError"]>
+};
+	/** The input fields for updating the payment method that will be used to checkout.
+ */
+["CartPaymentInput"]: {
+		/** The amount that the customer will be charged at checkout. */
+	amount: GraphQLTypes["MoneyInput"],
+	/** An ID of the order placed on the originating platform.
+Note that this value doesn't correspond to the Shopify Order ID.
+ */
+	sourceIdentifier?: string | undefined,
+	/** The input fields to use to checkout a cart without providing a payment method.
+Use this payment method input if the total cost of the cart is 0.
+ */
+	freePaymentMethod?: GraphQLTypes["CartFreePaymentMethodInput"] | undefined,
+	/** The input fields to use when checking out a cart with a direct payment method (like a credit card).
+ */
+	directPaymentMethod?: GraphQLTypes["CartDirectPaymentMethodInput"] | undefined,
+	/** The input fields to use when checking out a cart with a wallet payment method (like Shop Pay or Apple Pay).
+ */
+	walletPaymentMethod?: GraphQLTypes["CartWalletPaymentMethodInput"] | undefined
+};
+	/** Return type for `cartPaymentUpdate` mutation. */
+["CartPaymentUpdatePayload"]: {
+	__typename: "CartPaymentUpdatePayload",
+	/** The updated cart. */
+	cart?: GraphQLTypes["Cart"] | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<GraphQLTypes["CartUserError"]>
+};
+	/** A set of preferences tied to the buyer interacting with the cart. Preferences are used to prefill fields in at checkout to streamline information collection. 
+Preferences are not synced back to the cart if they are overwritten.
+ */
+["CartPreferences"]: {
+	__typename: "CartPreferences",
+	/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?: GraphQLTypes["CartDeliveryPreference"] | undefined,
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+ */
+	wallet?: Array<string> | undefined
+};
+	/** The input fields represent preferences for the buyer that is interacting with the cart. */
+["CartPreferencesInput"]: {
+		/** Delivery preferences can be used to prefill the delivery section in at checkout. */
+	delivery?: GraphQLTypes["CartDeliveryPreferenceInput"] | undefined,
+	/** Wallet preferences are used to populate relevant payment fields in the checkout flow.
+Accepted value: `["shop_pay"]`.
+
+The input must not contain more than `250` values. */
+	wallet?: Array<string> | undefined
 };
 	/** The input fields for updating the selected delivery options for a delivery group.
  */
@@ -12300,6 +15324,22 @@ Buyer identity should match the customer's shipping address.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["CartUserError"]>
 };
+	/** Return type for `cartSubmitForCompletion` mutation. */
+["CartSubmitForCompletionPayload"]: {
+	__typename: "CartSubmitForCompletionPayload",
+	/** The result of cart submission for completion. */
+	result?: GraphQLTypes["CartSubmitForCompletionResult"] | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	userErrors: Array<GraphQLTypes["CartUserError"]>
+};
+	/** The result of cart submit completion. */
+["CartSubmitForCompletionResult"]:{
+        	__typename:"SubmitAlreadyAccepted" | "SubmitFailed" | "SubmitSuccess" | "SubmitThrottled"
+        	['...on SubmitAlreadyAccepted']: '__union' & GraphQLTypes["SubmitAlreadyAccepted"];
+	['...on SubmitFailed']: '__union' & GraphQLTypes["SubmitFailed"];
+	['...on SubmitSuccess']: '__union' & GraphQLTypes["SubmitSuccess"];
+	['...on SubmitThrottled']: '__union' & GraphQLTypes["SubmitThrottled"];
+};
 	/** Represents an error that happens during execution of a cart mutation. */
 ["CartUserError"]: {
 	__typename: "CartUserError",
@@ -12310,7 +15350,18 @@ Buyer identity should match the customer's shipping address.
 	/** The error message. */
 	message: string
 };
-	/** A container for all the information required to checkout items and pay. */
+	/** The input fields for submitting wallet payment method information for checkout.
+ */
+["CartWalletPaymentMethodInput"]: {
+		/** The payment method information for the Apple Pay wallet. */
+	applePayWalletContent?: GraphQLTypes["ApplePayWalletContentInput"] | undefined,
+	/** The payment method information for the Shop Pay wallet. */
+	shopPayWalletContent?: GraphQLTypes["ShopPayWalletContentInput"] | undefined
+};
+	/** A container for all the information required to checkout items and pay.
+
+The Storefront GraphQL Checkout API is deprecated and will be removed in a future version. Please see https://shopify.dev/changelog/deprecation-of-checkout-apis for more information.
+ */
 ["Checkout"]: {
 	__typename: "Checkout",
 	/** The gift cards used on the checkout. */
@@ -12328,13 +15379,13 @@ the shipping address is valid.
 	createdAt: GraphQLTypes["DateTime"],
 	/** The currency code for the checkout. */
 	currencyCode: GraphQLTypes["CurrencyCode"],
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout. */
 	customAttributes: Array<GraphQLTypes["Attribute"]>,
 	/** Discounts that have been applied on the checkout. */
 	discountApplications: GraphQLTypes["DiscountApplicationConnection"],
 	/** The email attached to this checkout. */
 	email?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** A list of line item objects, each one containing information about an item in the checkout. */
 	lineItems: GraphQLTypes["CheckoutLineItemConnection"],
@@ -12344,7 +15395,7 @@ the shipping address is valid.
 	note?: string | undefined,
 	/** The resulting order from a paid checkout. */
 	order?: GraphQLTypes["Order"] | undefined,
-	/** The Order Status Page for this Checkout, null when checkout is not completed. */
+	/** The <b>Order status</b> page for this Checkout, null when checkout isn't completed. */
 	orderStatusUrl?: GraphQLTypes["URL"] | undefined,
 	/** The amount left to be paid. This is equal to the cost of the line items, taxes, and shipping, minus discounts and gift cards. */
 	paymentDue: GraphQLTypes["MoneyV2"],
@@ -12363,7 +15414,7 @@ date, polling is required until the value is true.
 	/** The discounts that have been allocated onto the shipping line by discount applications.
  */
 	shippingDiscountAllocations: Array<GraphQLTypes["DiscountAllocation"]>,
-	/** Once a shipping rate is selected by the customer it is transitioned to a `shipping_line` object. */
+	/** Once a shipping rate is selected by the customer it's transitioned to a `shipping_line` object. */
 	shippingLine?: GraphQLTypes["ShippingRate"] | undefined,
 	/** The price at checkout before shipping and taxes. */
 	subtotalPrice: GraphQLTypes["MoneyV2"],
@@ -12388,11 +15439,13 @@ date, polling is required until the value is true.
 	/** The url pointing to the checkout accessible from the web. */
 	webUrl: GraphQLTypes["URL"]
 };
-	/** Specifies the fields required to update a checkout's attributes. */
+	/** The input fields required to update a checkout's attributes. */
 ["CheckoutAttributesUpdateV2Input"]: {
 		/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<GraphQLTypes["AttributeInput"]> | undefined,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -12417,7 +15470,7 @@ each operation.
 	/** The country code for the checkout. For example, `CA`. */
 	countryCode?: GraphQLTypes["CountryCode"] | undefined
 };
-	/** Specifies the identity of the customer associated with the checkout. */
+	/** The input fields for the identity of the customer associated with the checkout. */
 ["CheckoutBuyerIdentityInput"]: {
 		/** The country code of one of the shop's
 [enabled countries](https://help.shopify.com/en/manual/payments/shopify-payments/multi-currency/setup).
@@ -12459,17 +15512,21 @@ For example, `CA`. Including this field creates a checkout in the specified coun
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["UserError"]>
 };
-	/** Specifies the fields required to create a checkout. */
+	/** The input fields required to create a checkout. */
 ["CheckoutCreateInput"]: {
 		/** The email with which the customer wants to checkout. */
 	email?: string | undefined,
-	/** A list of line item objects, each one containing information about an item in the checkout. */
+	/** A list of line item objects, each one containing information about an item in the checkout.
+
+The input must not contain more than `250` values. */
 	lineItems?: Array<GraphQLTypes["CheckoutLineItemInput"]> | undefined,
 	/** The shipping address to where the line items will be shipped. */
 	shippingAddress?: GraphQLTypes["MailingAddressInput"] | undefined,
 	/** The text of an optional note that a shop owner can attach to the checkout. */
 	note?: string | undefined,
-	/** A list of extra information that is added to the checkout. */
+	/** A list of extra information that's added to the checkout.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<GraphQLTypes["AttributeInput"]> | undefined,
 	/** Allows setting partial addresses on a Checkout, skipping the full validation of attributes.
 The required attributes are city, province, and country.
@@ -12572,7 +15629,7 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	customAttributes: Array<GraphQLTypes["Attribute"]>,
 	/** The discounts that have been allocated onto the checkout line item by discount applications. */
 	discountAllocations: Array<GraphQLTypes["DiscountAllocation"]>,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The quantity of the line item. */
 	quantity: number,
@@ -12603,24 +15660,28 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	/** The item at the end of CheckoutLineItemEdge. */
 	node: GraphQLTypes["CheckoutLineItem"]
 };
-	/** Specifies the input fields to create a line item on a checkout. */
+	/** The input fields to create a line item on a checkout. */
 ["CheckoutLineItemInput"]: {
-		/** Extra information in the form of an array of Key-Value pairs about the line item. */
+		/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<GraphQLTypes["AttributeInput"]> | undefined,
 	/** The quantity of the line item. */
 	quantity: number,
-	/** The identifier of the product variant for the line item. */
+	/** The ID of the product variant for the line item. */
 	variantId: string
 };
-	/** Specifies the input fields to update a line item on the checkout. */
+	/** The input fields to update a line item on the checkout. */
 ["CheckoutLineItemUpdateInput"]: {
-		/** The identifier of the line item. */
+		/** The ID of the line item. */
 	id?: string | undefined,
-	/** The variant identifier of the line item. */
+	/** The variant ID of the line item. */
 	variantId?: string | undefined,
 	/** The quantity of the line item. */
 	quantity?: number | undefined,
-	/** Extra information in the form of an array of Key-Value pairs about the line item. */
+	/** Extra information in the form of an array of Key-Value pairs about the line item.
+
+The input must not contain more than `250` values. */
 	customAttributes?: Array<GraphQLTypes["AttributeInput"]> | undefined
 };
 	/** Return type for `checkoutLineItemsAdd` mutation. */
@@ -12691,7 +15752,9 @@ Full validation of addresses is still done at completion time. Defaults to `null
 	/** The error message. */
 	message: string
 };
-	/** A collection represents a grouping of products that a shop owner can create to organize them or make their shops easier to browse. */
+	/** A collection represents a grouping of products that a shop owner can create to
+organize them or make their shops easier to browse.
+ */
 ["Collection"]: {
 	__typename: "Collection",
 	/** Stripped description of the collection, single line with HTML tags removed. */
@@ -12702,14 +15765,13 @@ Full validation of addresses is still done at completion time. Defaults to `null
 Limit of 255 characters.
  */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** Image associated with the collection. */
 	image?: GraphQLTypes["Image"] | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: GraphQLTypes["URL"] | undefined,
@@ -12719,6 +15781,8 @@ Limit of 255 characters.
 	seo: GraphQLTypes["SEO"],
 	/** The collection’s name. Limit of 255 characters. */
 	title: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined,
 	/** The date and time when the collection was last modified. */
 	updatedAt: GraphQLTypes["DateTime"]
 };
@@ -12731,7 +15795,9 @@ Limit of 255 characters.
 	/** A list of the nodes contained in CollectionEdge. */
 	nodes: Array<GraphQLTypes["Collection"]>,
 	/** Information to aid in pagination. */
-	pageInfo: GraphQLTypes["PageInfo"]
+	pageInfo: GraphQLTypes["PageInfo"],
+	/** The total count of Collections. */
+	totalCount: GraphQLTypes["UnsignedInt64"]
 };
 	/** An auto-generated type which holds one Collection and a cursor during pagination.
  */
@@ -12758,7 +15824,7 @@ For example, "#6A8D48".
 	content: string,
 	/** The content of the comment, complete with HTML formatting. */
 	contentHtml: GraphQLTypes["HTML"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string
 };
 	/** The author of a comment. */
@@ -12789,6 +15855,98 @@ For example, "#6A8D48".
 	/** The item at the end of CommentEdge. */
 	node: GraphQLTypes["Comment"]
 };
+	/** Represents information about a company which is also a customer of the shop. */
+["Company"]: {
+	__typename: "Company",
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was created in Shopify. */
+	createdAt: GraphQLTypes["DateTime"],
+	/** A unique externally-supplied ID for the company. */
+	externalId?: string | undefined,
+	/** A globally-unique ID. */
+	id: string,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: GraphQLTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
+	/** The name of the company. */
+	name: string,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company was last modified. */
+	updatedAt: GraphQLTypes["DateTime"]
+};
+	/** A company's main point of contact. */
+["CompanyContact"]: {
+	__typename: "CompanyContact",
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was created in Shopify. */
+	createdAt: GraphQLTypes["DateTime"],
+	/** A globally-unique ID. */
+	id: string,
+	/** The company contact's locale (language). */
+	locale?: string | undefined,
+	/** The company contact's job title. */
+	title?: string | undefined,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company contact was last modified. */
+	updatedAt: GraphQLTypes["DateTime"]
+};
+	/** A company's location. */
+["CompanyLocation"]: {
+	__typename: "CompanyLocation",
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was created in Shopify. */
+	createdAt: GraphQLTypes["DateTime"],
+	/** A unique externally-supplied ID for the company. */
+	externalId?: string | undefined,
+	/** A globally-unique ID. */
+	id: string,
+	/** The preferred locale of the company location. */
+	locale?: string | undefined,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: GraphQLTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
+	/** The name of the company location. */
+	name: string,
+	/** The date and time ([ISO 8601 format](http://en.wikipedia.org/wiki/ISO_8601)) at which the company location was last modified. */
+	updatedAt: GraphQLTypes["DateTime"]
+};
+	/** The action for the 3DS payment redirect. */
+["CompletePaymentChallenge"]: {
+	__typename: "CompletePaymentChallenge",
+	/** The URL for the 3DS payment redirect. */
+	redirectUrl?: GraphQLTypes["URL"] | undefined
+};
+	/** An error that occurred during a cart completion attempt. */
+["CompletionError"]: {
+	__typename: "CompletionError",
+	/** The error code. */
+	code: GraphQLTypes["CompletionErrorCode"],
+	/** The error message. */
+	message?: string | undefined
+};
+	/** The code of the error that occurred during a cart completion attempt. */
+["CompletionErrorCode"]: CompletionErrorCode;
+	/** Represents information about the grouped merchandise in the cart. */
+["ComponentizableCartLine"]: {
+	__typename: "ComponentizableCartLine",
+	/** An attribute associated with the cart line. */
+	attribute?: GraphQLTypes["Attribute"] | undefined,
+	/** The attributes associated with the cart line. Attributes are represented as key-value pairs. */
+	attributes: Array<GraphQLTypes["Attribute"]>,
+	/** The cost of the merchandise that the buyer will pay for at checkout. The costs are subject to change and changes will be reflected at checkout. */
+	cost: GraphQLTypes["CartLineCost"],
+	/** The discounts that have been applied to the cart line. */
+	discountAllocations: Array<GraphQLTypes["CartDiscountAllocation"]>,
+	/** The estimated cost of the merchandise that the buyer will pay for at checkout. The estimated costs are subject to change and changes will be reflected at checkout. */
+	estimatedCost: GraphQLTypes["CartLineEstimatedCost"],
+	/** A globally-unique ID. */
+	id: string,
+	/** The components of the line item. */
+	lineComponents: Array<GraphQLTypes["CartLine"]>,
+	/** The merchandise that the buyer intends to purchase. */
+	merchandise: GraphQLTypes["Merchandise"],
+	/** The quantity of the merchandise that the customer intends to purchase. */
+	quantity: number,
+	/** The selling plan associated with the cart line and the effect that each selling plan has on variants when they're purchased. */
+	sellingPlanAllocation?: GraphQLTypes["SellingPlanAllocation"] | undefined
+};
 	/** A country. */
 ["Country"]: {
 	__typename: "Country",
@@ -12798,6 +15956,8 @@ For example, "#6A8D48".
 	currency: GraphQLTypes["Currency"],
 	/** The ISO code of the country. */
 	isoCode: GraphQLTypes["CountryCode"],
+	/** The market that includes this country. */
+	market?: GraphQLTypes["Market"] | undefined,
 	/** The name of the country. */
 	name: string,
 	/** The unit system used in the country. */
@@ -12856,7 +16016,8 @@ a Shopify vaulted credit card payment.
 	/** The symbol of the currency. */
 	symbol: string
 };
-	/** The three-letter currency codes that represent the world currencies used in stores. These include standard ISO 4217 codes, legacy codes,
+	/** The three-letter currency codes that represent the world currencies used in
+stores. These include standard ISO 4217 codes, legacy codes,
 and non-standard codes.
  */
 ["CurrencyCode"]: CurrencyCode;
@@ -12877,16 +16038,15 @@ and non-standard codes.
 	email?: string | undefined,
 	/** The customer’s first name. */
 	firstName?: string | undefined,
-	/** A unique identifier for the customer. */
+	/** A unique ID for the customer. */
 	id: string,
 	/** The customer's most recently updated, incomplete checkout. */
 	lastIncompleteCheckout?: GraphQLTypes["Checkout"] | undefined,
 	/** The customer’s last name. */
 	lastName?: string | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** The number of orders that the customer has made at the store in their lifetime. */
 	numberOfOrders: GraphQLTypes["UnsignedInt64"],
@@ -12909,7 +16069,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	/** The date and time when the customer access token expires. */
 	expiresAt: GraphQLTypes["DateTime"]
 };
-	/** Specifies the input fields required to create a customer access token. */
+	/** The input fields required to create a customer access token. */
 ["CustomerAccessTokenCreateInput"]: {
 		/** The email associated to the customer. */
 	email: string,
@@ -12962,7 +16122,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	/** The list of errors that occurred from executing the mutation. */
 	customerUserErrors: Array<GraphQLTypes["CustomerUserError"]>
 };
-	/** Specifies the input fields required to activate a customer. */
+	/** The input fields to activate a customer. */
 ["CustomerActivateInput"]: {
 		/** The activation token required to activate the customer. */
 	activationToken: string,
@@ -13011,7 +16171,7 @@ Additional access scope required: unauthenticated_read_customer_tags.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["UserError"]>
 };
-	/** The fields required to create a new customer. */
+	/** The input fields to create a new customer. */
 ["CustomerCreateInput"]: {
 		/** The customer’s first name. */
 	firstName?: string | undefined,
@@ -13071,7 +16231,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["UserError"]>
 };
-	/** Specifies the fields required to reset a customer’s password. */
+	/** The input fields to reset a customer's password. */
 ["CustomerResetInput"]: {
 		/** The reset token required to reset the customer’s password. */
 	resetToken: string,
@@ -13090,7 +16250,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The list of errors that occurred from executing the mutation. */
 	userErrors: Array<GraphQLTypes["UserError"]>
 };
-	/** Specifies the fields required to update the Customer information. */
+	/** The input fields to update the Customer information. */
 ["CustomerUpdateInput"]: {
 		/** The customer’s first name. */
 	firstName?: string | undefined,
@@ -13151,8 +16311,16 @@ Example values: `"29.99"`, `"29.999"`.
  */
 ["DeliveryAddressInput"]: {
 		/** A delivery address preference of a buyer that is interacting with the cart. */
-	deliveryAddress?: GraphQLTypes["MailingAddressInput"] | undefined
+	deliveryAddress?: GraphQLTypes["MailingAddressInput"] | undefined,
+	/** Defines what kind of address validation is requested. */
+	deliveryAddressValidationStrategy?: GraphQLTypes["DeliveryAddressValidationStrategy"] | undefined,
+	/** The ID of a customer address that is associated with the buyer that is interacting with the cart.
+ */
+	customerAddressId?: string | undefined
 };
+	/** Defines the types of available validation strategies for delivery addresses.
+ */
+["DeliveryAddressValidationStrategy"]: DeliveryAddressValidationStrategy;
 	/** List of different delivery method types. */
 ["DeliveryMethodType"]: DeliveryMethodType;
 	/** Digital wallet, such as Apple Pay, which can be used for accelerated checkouts. */
@@ -13235,7 +16403,7 @@ the time that it is applied.
 };
 	/** Represents an error in the input of a mutation. */
 ["DisplayableError"]: {
-	__typename:"CartUserError" | "CheckoutUserError" | "CustomerUserError" | "UserError",
+	__typename:"CartUserError" | "CheckoutUserError" | "CustomerUserError" | "MetafieldDeleteUserError" | "MetafieldsSetUserError" | "UserError",
 	/** The path to the input field that caused the error. */
 	field?: Array<string> | undefined,
 	/** The error message. */
@@ -13243,6 +16411,8 @@ the time that it is applied.
 	['...on CartUserError']: '__union' & GraphQLTypes["CartUserError"];
 	['...on CheckoutUserError']: '__union' & GraphQLTypes["CheckoutUserError"];
 	['...on CustomerUserError']: '__union' & GraphQLTypes["CustomerUserError"];
+	['...on MetafieldDeleteUserError']: '__union' & GraphQLTypes["MetafieldDeleteUserError"];
+	['...on MetafieldsSetUserError']: '__union' & GraphQLTypes["MetafieldsSetUserError"];
 	['...on UserError']: '__union' & GraphQLTypes["UserError"];
 };
 	/** Represents a web address. */
@@ -13266,12 +16436,14 @@ the time that it is applied.
 	embeddedUrl: GraphQLTypes["URL"],
 	/** The host of the external video. */
 	host: GraphQLTypes["MediaHost"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The media content type. */
 	mediaContentType: GraphQLTypes["MediaContentType"],
 	/** The origin URL of the video on the respective host. */
 	originUrl: GraphQLTypes["URL"],
+	/** The presentation for a media. */
+	presentation?: GraphQLTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: GraphQLTypes["Image"] | undefined
 };
@@ -13282,11 +16454,18 @@ the time that it is applied.
 	id: string,
 	/** A human-friendly string for this filter. */
 	label: string,
+	/** Describes how to present the filter values.
+Returns a value only for filters of type `LIST`. Returns null for other types.
+ */
+	presentation?: GraphQLTypes["FilterPresentation"] | undefined,
 	/** An enumeration that denotes the type of data this filter represents. */
 	type: GraphQLTypes["FilterType"],
 	/** The list of values for this filter. */
 	values: Array<GraphQLTypes["FilterValue"]>
 };
+	/** Defines how to present the filter values, specifies the presentation of the filter.
+ */
+["FilterPresentation"]: FilterPresentation;
 	/** The type of data that the filter group represents.
 
 For more information, refer to [Filter products in a collection with the Storefront API]
@@ -13300,13 +16479,19 @@ For more information, refer to [Filter products in a collection with the Storefr
 	count: number,
 	/** A unique identifier. */
 	id: string,
+	/** The visual representation when the filter's presentation is `IMAGE`. */
+	image?: GraphQLTypes["MediaImage"] | undefined,
 	/** An input object that can be used to filter by this value on the parent field.
 
-The value is provided as a helper for building dynamic filtering UI. For example, if you have a list of selected `FilterValue` objects, you can combine their respective `input` values to use in a subsequent query.
+The value is provided as a helper for building dynamic filtering UI. For
+example, if you have a list of selected `FilterValue` objects, you can combine
+their respective `input` values to use in a subsequent query.
  */
 	input: GraphQLTypes["JSON"],
 	/** A human-friendly string for this filter value. */
-	label: string
+	label: string,
+	/** The visual representation when the filter's presentation is `SWATCH`. */
+	swatch?: GraphQLTypes["Swatch"] | undefined
 };
 	/** Represents a single fulfillment in an order. */
 ["Fulfillment"]: {
@@ -13361,7 +16546,7 @@ such as the tracking number and tracking URL.
 	__typename: "GenericFile",
 	/** A word or phrase to indicate the contents of a file. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The MIME type of the file. */
 	mimeType?: string | undefined,
@@ -13372,7 +16557,7 @@ such as the tracking number and tracking URL.
 	/** The URL of the file. */
 	url?: GraphQLTypes["URL"] | undefined
 };
-	/** Used to specify a geographical location. */
+	/** The input fields used to specify a geographical location. */
 ["GeoCoordinateInput"]: {
 		/** The coordinate's latitude value. */
 	latitude: number,
@@ -13387,26 +16572,30 @@ Example value: `"<p>Grey cotton knit sweater.</p>"`
 ["HTML"]: "scalar" & { name: "HTML" };
 	/** Represents information about the metafields associated to the specified resource. */
 ["HasMetafields"]: {
-	__typename:"Article" | "Blog" | "Collection" | "Customer" | "Order" | "Page" | "Product" | "ProductVariant" | "Shop",
-	/** Returns a metafield found by namespace and key. */
+	__typename:"Article" | "Blog" | "Cart" | "Collection" | "Company" | "CompanyLocation" | "Customer" | "Location" | "Market" | "Order" | "Page" | "Product" | "ProductVariant" | "Shop",
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>
 	['...on Article']: '__union' & GraphQLTypes["Article"];
 	['...on Blog']: '__union' & GraphQLTypes["Blog"];
+	['...on Cart']: '__union' & GraphQLTypes["Cart"];
 	['...on Collection']: '__union' & GraphQLTypes["Collection"];
+	['...on Company']: '__union' & GraphQLTypes["Company"];
+	['...on CompanyLocation']: '__union' & GraphQLTypes["CompanyLocation"];
 	['...on Customer']: '__union' & GraphQLTypes["Customer"];
+	['...on Location']: '__union' & GraphQLTypes["Location"];
+	['...on Market']: '__union' & GraphQLTypes["Market"];
 	['...on Order']: '__union' & GraphQLTypes["Order"];
 	['...on Page']: '__union' & GraphQLTypes["Page"];
 	['...on Product']: '__union' & GraphQLTypes["Product"];
 	['...on ProductVariant']: '__union' & GraphQLTypes["ProductVariant"];
 	['...on Shop']: '__union' & GraphQLTypes["Shop"];
 };
-	/** Identifies a metafield on an owner resource by namespace and key. */
+	/** The input fields to identify a metafield on an owner resource by namespace and key. */
 ["HasMetafieldsIdentifier"]: {
-		/** A container for a set of metafields. */
-	namespace: string,
+		/** The container the metafield belongs to. If omitted, the app-reserved namespace will be used. */
+	namespace?: string | undefined,
 	/** The identifier for the metafield. */
 	key: string
 };
@@ -13415,9 +16604,9 @@ Example value: `"<p>Grey cotton knit sweater.</p>"`
 	__typename: "Image",
 	/** A word or phrase to share the nature or contents of an image. */
 	altText?: string | undefined,
-	/** The original height of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original height of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	height?: number | undefined,
-	/** A unique identifier for the image. */
+	/** A unique ID for the image. */
 	id?: string | undefined,
 	/** The location of the original image as a URL.
 
@@ -13429,7 +16618,7 @@ If there are any existing transformations in the original source URL, they will 
 	/** The location of the transformed image as a URL.
 
 All transformation arguments are considered "best-effort". If they can be applied to an image, they will be.
-Otherwise any transformations which an image type does not support will be ignored.
+Otherwise any transformations which an image type doesn't support will be ignored.
  */
 	transformedSrc: GraphQLTypes["URL"],
 	/** The location of the image as a URL.
@@ -13441,7 +16630,7 @@ All transformation options are considered "best-effort". Any transformation that
 If you need multiple variations of the same image, then you can use [GraphQL aliases](https://graphql.org/learn/queries/#aliases).
  */
 	url: GraphQLTypes["URL"],
-	/** The original width of the image in pixels. Returns `null` if the image is not hosted by Shopify. */
+	/** The original width of the image in pixels. Returns `null` if the image isn't hosted by Shopify. */
 	width?: number | undefined
 };
 	/** An auto-generated type for paginating through multiple Images.
@@ -13468,13 +16657,16 @@ If you need multiple variations of the same image, then you can use [GraphQL ali
 };
 	/** The available options for transforming an image.
 
-All transformation options are considered best effort. Any transformation that the original image type doesn't support will be ignored.
+All transformation options are considered best effort. Any transformation that
+the original image type doesn't support will be ignored.
  */
 ["ImageTransformInput"]: {
 		/** The region of the image to remain after cropping.
-Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields, where the `maxWidth` and `maxHeight` aren't equal.
+Must be used in conjunction with the `maxWidth` and/or `maxHeight` fields,
+where the `maxWidth` and `maxHeight` aren't equal.
 The `crop` argument should coincide with the smaller value. A smaller `maxWidth` indicates a `LEFT` or `RIGHT` crop, while
-a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{ maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
+a smaller `maxHeight` indicates a `TOP` or `BOTTOM` crop. For example, `{
+maxWidth: 5, maxHeight: 10, crop: LEFT }` will result
 in an image with a width of 5 and height of 10, where the right side of the image is removed.
  */
 	crop?: GraphQLTypes["CropRegion"] | undefined,
@@ -13491,6 +16683,18 @@ in an image with a width of 5 and height of 10, where the right side of the imag
 Supported conversions: `.svg` to `.png`, any file type to `.jpg`, and any file type to `.webp`.
  */
 	preferredContentType?: GraphQLTypes["ImageContentType"] | undefined
+};
+	/** Provide details about the contexts influenced by the @inContext directive on a field. */
+["InContextAnnotation"]: {
+	__typename: "InContextAnnotation",
+	description: string,
+	type: GraphQLTypes["InContextAnnotationType"]
+};
+	/** This gives information about the type of context that impacts a field. For example, for a query with @inContext(language: "EN"), the type would point to the name: LanguageCode and kind: ENUM. */
+["InContextAnnotationType"]: {
+	__typename: "InContextAnnotationType",
+	kind: string,
+	name: string
 };
 	/** A [JSON](https://www.json.org/json-en.html) object.
 
@@ -13517,7 +16721,7 @@ Example value:
 	/** The name of the language in the current language. */
 	name: string
 };
-	/** ISO 639-1 language codes supported by Shopify. */
+	/** Language codes supported by Shopify. */
 ["LanguageCode"]: LanguageCode;
 	/** Information about the localized experiences configured for the shop. */
 ["Localization"]: {
@@ -13529,15 +16733,21 @@ Example value:
 	/** The country of the active localized experience. Use the `@inContext` directive to change this value. */
 	country: GraphQLTypes["Country"],
 	/** The language of the active localized experience. Use the `@inContext` directive to change this value. */
-	language: GraphQLTypes["Language"]
+	language: GraphQLTypes["Language"],
+	/** The market including the country of the active localized experience. Use the `@inContext` directive to change this value. */
+	market: GraphQLTypes["Market"]
 };
 	/** Represents a location where product inventory is held. */
 ["Location"]: {
 	__typename: "Location",
 	/** The address of the location. */
 	address: GraphQLTypes["LocationAddress"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: GraphQLTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** The name of the location. */
 	name: string
 };
@@ -13601,14 +16811,11 @@ Example value:
 	/** The second line of the address. Typically the number of the apartment, suite, or unit.
  */
 	address2?: string | undefined,
-	/** The name of the city, district, village, or town.
- */
+	/** The name of the city, district, village, or town. */
 	city?: string | undefined,
-	/** The name of the customer's company or organization.
- */
+	/** The name of the customer's company or organization. */
 	company?: string | undefined,
-	/** The name of the country.
- */
+	/** The name of the country. */
 	country?: string | undefined,
 	/** The two-letter code for the country of the address.
 
@@ -13626,7 +16833,7 @@ For example, US.
 	formatted: Array<string>,
 	/** A comma-separated list of the values for city, province, and country. */
 	formattedArea?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The last name of the customer. */
 	lastName?: string | undefined,
@@ -13634,8 +16841,7 @@ For example, US.
 	latitude?: number | undefined,
 	/** The longitude coordinate of the customer address. */
 	longitude?: number | undefined,
-	/** The full name of the customer, based on firstName and lastName.
- */
+	/** The full name of the customer, based on firstName and lastName. */
 	name?: string | undefined,
 	/** A unique phone number for the customer.
 
@@ -13644,7 +16850,7 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	phone?: string | undefined,
 	/** The region of the address, such as the province, state, or district. */
 	province?: string | undefined,
-	/** The two-letter code for the region.
+	/** The alphanumeric code for the region.
 
 For example, ON.
  */
@@ -13672,7 +16878,7 @@ For example, ON.
 	/** The item at the end of MailingAddressEdge. */
 	node: GraphQLTypes["MailingAddress"]
 };
-	/** Specifies the fields accepted to create or update a mailing address. */
+	/** The input fields to create or update a mailing address. */
 ["MailingAddressInput"]: {
 		/** The first line of the address. Typically the street address or PO Box number.
  */
@@ -13719,13 +16925,30 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The value of the discount application. */
 	value: GraphQLTypes["PricingValue"]
 };
+	/** A group of one or more regions of the world that a merchant is targeting for sales. To learn more about markets, refer to [the Shopify Markets conceptual overview](/docs/apps/markets). */
+["Market"]: {
+	__typename: "Market",
+	/** A human-readable unique string for the market automatically generated from its title.
+ */
+	handle: string,
+	/** A globally-unique ID. */
+	id: string,
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
+	metafield?: GraphQLTypes["Metafield"] | undefined,
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
+	metafields: Array<GraphQLTypes["Metafield"] | undefined>
+};
 	/** Represents a media interface. */
 ["Media"]: {
 	__typename:"ExternalVideo" | "MediaImage" | "Model3d" | "Video",
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?: string | undefined,
+	/** A globally-unique ID. */
+	id: string,
 	/** The media content type. */
 	mediaContentType: GraphQLTypes["MediaContentType"],
+	/** The presentation for a media. */
+	presentation?: GraphQLTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: GraphQLTypes["Image"] | undefined
 	['...on ExternalVideo']: '__union' & GraphQLTypes["ExternalVideo"];
@@ -13762,22 +16985,35 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	__typename: "MediaImage",
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The image for the media. */
 	image?: GraphQLTypes["Image"] | undefined,
 	/** The media content type. */
 	mediaContentType: GraphQLTypes["MediaContentType"],
+	/** The presentation for a media. */
+	presentation?: GraphQLTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: GraphQLTypes["Image"] | undefined
 };
-	/** A menu used for navigation within a storefront.
+	/** A media presentation. */
+["MediaPresentation"]: {
+	__typename: "MediaPresentation",
+	/** A JSON object representing a presentation view. */
+	asJson?: GraphQLTypes["JSON"] | undefined,
+	/** A globally-unique ID. */
+	id: string
+};
+	/** The possible formats for a media presentation. */
+["MediaPresentationFormat"]: MediaPresentationFormat;
+	/** A [navigation menu](https://help.shopify.com/manual/online-store/menus-and-links) representing a hierarchy
+of hyperlinks (items).
  */
 ["Menu"]: {
 	__typename: "Menu",
 	/** The menu's handle. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The menu's child items. */
 	items: Array<GraphQLTypes["MenuItem"]>,
@@ -13786,14 +17022,15 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	/** The menu's title. */
 	title: string
 };
-	/** A menu item within a parent menu.
- */
+	/** A menu item within a parent menu. */
 ["MenuItem"]: {
 	__typename: "MenuItem",
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The menu item's child items. */
 	items: Array<GraphQLTypes["MenuItem"]>,
+	/** The linked resource. */
+	resource?: GraphQLTypes["MenuItemResource"] | undefined,
 	/** The ID of the linked resource. */
 	resourceId?: string | undefined,
 	/** The menu item's tags to filter a collection. */
@@ -13804,6 +17041,18 @@ Formatted using E.164 standard. For example, _+16135551111_.
 	type: GraphQLTypes["MenuItemType"],
 	/** The menu item's URL. */
 	url?: GraphQLTypes["URL"] | undefined
+};
+	/** The list of possible resources a `MenuItem` can reference.
+ */
+["MenuItemResource"]:{
+        	__typename:"Article" | "Blog" | "Collection" | "Metaobject" | "Page" | "Product" | "ShopPolicy"
+        	['...on Article']: '__union' & GraphQLTypes["Article"];
+	['...on Blog']: '__union' & GraphQLTypes["Blog"];
+	['...on Collection']: '__union' & GraphQLTypes["Collection"];
+	['...on Metaobject']: '__union' & GraphQLTypes["Metaobject"];
+	['...on Page']: '__union' & GraphQLTypes["Page"];
+	['...on Product']: '__union' & GraphQLTypes["Product"];
+	['...on ShopPolicy']: '__union' & GraphQLTypes["ShopPolicy"];
 };
 	/** A menu item type. */
 ["MenuItemType"]: MenuItemType;
@@ -13821,26 +17070,38 @@ comprised of keys, values, and value types.
 	createdAt: GraphQLTypes["DateTime"],
 	/** The description of a metafield. */
 	description?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** The key name for a metafield. */
+	/** The unique identifier for the metafield within its namespace. */
 	key: string,
-	/** The namespace for a metafield. */
+	/** The container for a group of metafields that the metafield is associated with. */
 	namespace: string,
-	/** The parent object that the metafield belongs to. */
+	/** The type of resource that the metafield is attached to. */
 	parentResource: GraphQLTypes["MetafieldParentResource"],
-	/** Returns a reference object if the metafield definition's type is a resource reference. */
+	/** Returns a reference object if the metafield's type is a resource reference. */
 	reference?: GraphQLTypes["MetafieldReference"] | undefined,
 	/** A list of reference objects if the metafield's type is a resource reference list. */
 	references?: GraphQLTypes["MetafieldReferenceConnection"] | undefined,
 	/** The type name of the metafield.
-See the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
+Refer to the list of [supported types](https://shopify.dev/apps/metafields/definitions/types).
  */
 	type: string,
-	/** The date and time when the storefront metafield was updated. */
+	/** The date and time when the metafield was last updated. */
 	updatedAt: GraphQLTypes["DateTime"],
-	/** The value of a metafield. */
+	/** The data stored in the metafield. Always stored as a string, regardless of the metafield's type. */
 	value: string
+};
+	/** Possible error codes that can be returned by `MetafieldDeleteUserError`. */
+["MetafieldDeleteErrorCode"]: MetafieldDeleteErrorCode;
+	/** An error that occurs during the execution of cart metafield deletion. */
+["MetafieldDeleteUserError"]: {
+	__typename: "MetafieldDeleteUserError",
+	/** The error code. */
+	code?: GraphQLTypes["MetafieldDeleteErrorCode"] | undefined,
+	/** The path to the input field that caused the error. */
+	field?: Array<string> | undefined,
+	/** The error message. */
+	message: string
 };
 	/** A filter used to view a subset of products in a collection matching a specific metafield value.
 
@@ -13860,11 +17121,16 @@ Only the following metafield types are currently supported:
 };
 	/** A resource that the metafield belongs to. */
 ["MetafieldParentResource"]:{
-        	__typename:"Article" | "Blog" | "Collection" | "Customer" | "Order" | "Page" | "Product" | "ProductVariant" | "Shop"
+        	__typename:"Article" | "Blog" | "Cart" | "Collection" | "Company" | "CompanyLocation" | "Customer" | "Location" | "Market" | "Order" | "Page" | "Product" | "ProductVariant" | "Shop"
         	['...on Article']: '__union' & GraphQLTypes["Article"];
 	['...on Blog']: '__union' & GraphQLTypes["Blog"];
+	['...on Cart']: '__union' & GraphQLTypes["Cart"];
 	['...on Collection']: '__union' & GraphQLTypes["Collection"];
+	['...on Company']: '__union' & GraphQLTypes["Company"];
+	['...on CompanyLocation']: '__union' & GraphQLTypes["CompanyLocation"];
 	['...on Customer']: '__union' & GraphQLTypes["Customer"];
+	['...on Location']: '__union' & GraphQLTypes["Location"];
+	['...on Market']: '__union' & GraphQLTypes["Market"];
 	['...on Order']: '__union' & GraphQLTypes["Order"];
 	['...on Page']: '__union' & GraphQLTypes["Page"];
 	['...on Product']: '__union' & GraphQLTypes["Product"];
@@ -13874,11 +17140,12 @@ Only the following metafield types are currently supported:
 	/** Returns the resource which is being referred to by a metafield.
  */
 ["MetafieldReference"]:{
-        	__typename:"Collection" | "GenericFile" | "MediaImage" | "Metaobject" | "Page" | "Product" | "ProductVariant" | "Video"
+        	__typename:"Collection" | "GenericFile" | "MediaImage" | "Metaobject" | "Model3d" | "Page" | "Product" | "ProductVariant" | "Video"
         	['...on Collection']: '__union' & GraphQLTypes["Collection"];
 	['...on GenericFile']: '__union' & GraphQLTypes["GenericFile"];
 	['...on MediaImage']: '__union' & GraphQLTypes["MediaImage"];
 	['...on Metaobject']: '__union' & GraphQLTypes["Metaobject"];
+	['...on Model3d']: '__union' & GraphQLTypes["Model3d"];
 	['...on Page']: '__union' & GraphQLTypes["Page"];
 	['...on Product']: '__union' & GraphQLTypes["Product"];
 	['...on ProductVariant']: '__union' & GraphQLTypes["ProductVariant"];
@@ -13904,6 +17171,20 @@ Only the following metafield types are currently supported:
 	/** The item at the end of MetafieldReferenceEdge. */
 	node: GraphQLTypes["MetafieldReference"]
 };
+	/** An error that occurs during the execution of `MetafieldsSet`. */
+["MetafieldsSetUserError"]: {
+	__typename: "MetafieldsSetUserError",
+	/** The error code. */
+	code?: GraphQLTypes["MetafieldsSetUserErrorCode"] | undefined,
+	/** The index of the array element that's causing the error. */
+	elementIndex?: number | undefined,
+	/** The path to the input field that caused the error. */
+	field?: Array<string> | undefined,
+	/** The error message. */
+	message: string
+};
+	/** Possible error codes that can be returned by `MetafieldsSetUserError`. */
+["MetafieldsSetUserErrorCode"]: MetafieldsSetUserErrorCode;
 	/** An instance of a user-defined model based on a MetaobjectDefinition. */
 ["Metaobject"]: {
 	__typename: "Metaobject",
@@ -13915,8 +17196,14 @@ Omitted object keys can be assumed null, and no guarantees are made about field 
 	fields: Array<GraphQLTypes["MetaobjectField"]>,
 	/** The unique handle of the metaobject. Useful as a custom ID. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
+	/** The URL used for viewing the metaobject on the shop's Online Store. Returns `null` if the metaobject definition doesn't have the `online_store` capability. */
+	onlineStoreUrl?: GraphQLTypes["URL"] | undefined,
+	/** The metaobject's SEO information. Returns `null` if the metaobject definition
+doesn't have the `renderable` capability.
+ */
+	seo?: GraphQLTypes["MetaobjectSEO"] | undefined,
 	/** The type of the metaobject. Defines the namespace of its associated metafields. */
 	type: string,
 	/** The date and time when the metaobject was last updated. */
@@ -13965,15 +17252,25 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	/** The type of the metaobject. */
 	type: string
 };
+	/** SEO information for a metaobject. */
+["MetaobjectSEO"]: {
+	__typename: "MetaobjectSEO",
+	/** The meta description. */
+	description?: GraphQLTypes["MetaobjectField"] | undefined,
+	/** The SEO title. */
+	title?: GraphQLTypes["MetaobjectField"] | undefined
+};
 	/** Represents a Shopify hosted 3D model. */
 ["Model3d"]: {
 	__typename: "Model3d",
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The media content type. */
 	mediaContentType: GraphQLTypes["MediaContentType"],
+	/** The presentation for a media. */
+	presentation?: GraphQLTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: GraphQLTypes["Image"] | undefined,
 	/** The sources for a 3d model. */
@@ -13991,7 +17288,7 @@ See the list of [supported types](https://shopify.dev/apps/metafields/definition
 	/** The URL of the 3d model. */
 	url: string
 };
-	/** Specifies the fields for a monetary value with currency. */
+	/** The input fields for a monetary value with currency. */
 ["MoneyInput"]: {
 		/** Decimal money amount. */
 	amount: GraphQLTypes["Decimal"],
@@ -14028,10 +17325,21 @@ and should match the customer's shipping address.
 	cartLinesRemove?: GraphQLTypes["CartLinesRemovePayload"] | undefined,
 	/** Updates one or more merchandise lines on a cart. */
 	cartLinesUpdate?: GraphQLTypes["CartLinesUpdatePayload"] | undefined,
+	/** Deletes a cart metafield. */
+	cartMetafieldDelete?: GraphQLTypes["CartMetafieldDeletePayload"] | undefined,
+	/** Sets cart metafield values. Cart metafield values will be set regardless if they were previously created or not.
+
+Allows a maximum of 25 cart metafields to be set at a time.
+ */
+	cartMetafieldsSet?: GraphQLTypes["CartMetafieldsSetPayload"] | undefined,
 	/** Updates the note on the cart. */
 	cartNoteUpdate?: GraphQLTypes["CartNoteUpdatePayload"] | undefined,
+	/** Update the customer's payment method that will be used to checkout. */
+	cartPaymentUpdate?: GraphQLTypes["CartPaymentUpdatePayload"] | undefined,
 	/** Update the selected delivery options for a delivery group. */
 	cartSelectedDeliveryOptionsUpdate?: GraphQLTypes["CartSelectedDeliveryOptionsUpdatePayload"] | undefined,
+	/** Submit the cart for checkout completion. */
+	cartSubmitForCompletion?: GraphQLTypes["CartSubmitForCompletionPayload"] | undefined,
 	/** Updates the attributes of a checkout if `allowPartialAddresses` is `true`. */
 	checkoutAttributesUpdateV2?: GraphQLTypes["CheckoutAttributesUpdateV2Payload"] | undefined,
 	/** Completes a checkout without providing payment information. You can use this mutation for free items or items whose purchase price is covered by a gift card. */
@@ -14106,8 +17414,9 @@ the [`customerResetByUrl`](https://shopify.dev/api/storefront/latest/mutations/c
 [`customerReset`](https://shopify.dev/api/storefront/latest/mutations/customerReset) mutation to reset the
 customer password.
 
-This mutation is throttled by IP. With authenticated access,
+This mutation is throttled by IP. With private access,
 you can provide a [`Shopify-Storefront-Buyer-IP`](https://shopify.dev/api/usage/authentication#optional-ip-header) instead of the request IP.
+The header is case-sensitive and must be sent as `Shopify-Storefront-Buyer-IP`.
 
 Make sure that the value provided to `Shopify-Storefront-Buyer-IP` is trusted. Unthrottled access to this
 mutation presents a security risk.
@@ -14128,11 +17437,12 @@ This interface is used by the [node](https://shopify.dev/api/admin-graphql/unsta
 and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) queries.
  */
 ["Node"]: {
-	__typename:"AppliedGiftCard" | "Article" | "Blog" | "Cart" | "CartLine" | "Checkout" | "CheckoutLineItem" | "Collection" | "Comment" | "ExternalVideo" | "GenericFile" | "Location" | "MailingAddress" | "MediaImage" | "Menu" | "MenuItem" | "Metafield" | "Metaobject" | "Model3d" | "Order" | "Page" | "Payment" | "Product" | "ProductOption" | "ProductVariant" | "Shop" | "ShopPolicy" | "UrlRedirect" | "Video",
-	/** A globally-unique identifier. */
+	__typename:"AppliedGiftCard" | "Article" | "BaseCartLine" | "Blog" | "Cart" | "CartLine" | "Checkout" | "CheckoutLineItem" | "Collection" | "Comment" | "Company" | "CompanyContact" | "CompanyLocation" | "ComponentizableCartLine" | "ExternalVideo" | "GenericFile" | "Location" | "MailingAddress" | "Market" | "MediaImage" | "MediaPresentation" | "Menu" | "MenuItem" | "Metafield" | "Metaobject" | "Model3d" | "Order" | "Page" | "Payment" | "Product" | "ProductOption" | "ProductVariant" | "Shop" | "ShopPolicy" | "UrlRedirect" | "Video",
+	/** A globally-unique ID. */
 	id: string
 	['...on AppliedGiftCard']: '__union' & GraphQLTypes["AppliedGiftCard"];
 	['...on Article']: '__union' & GraphQLTypes["Article"];
+	['...on BaseCartLine']: '__union' & GraphQLTypes["BaseCartLine"];
 	['...on Blog']: '__union' & GraphQLTypes["Blog"];
 	['...on Cart']: '__union' & GraphQLTypes["Cart"];
 	['...on CartLine']: '__union' & GraphQLTypes["CartLine"];
@@ -14140,11 +17450,17 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 	['...on CheckoutLineItem']: '__union' & GraphQLTypes["CheckoutLineItem"];
 	['...on Collection']: '__union' & GraphQLTypes["Collection"];
 	['...on Comment']: '__union' & GraphQLTypes["Comment"];
+	['...on Company']: '__union' & GraphQLTypes["Company"];
+	['...on CompanyContact']: '__union' & GraphQLTypes["CompanyContact"];
+	['...on CompanyLocation']: '__union' & GraphQLTypes["CompanyLocation"];
+	['...on ComponentizableCartLine']: '__union' & GraphQLTypes["ComponentizableCartLine"];
 	['...on ExternalVideo']: '__union' & GraphQLTypes["ExternalVideo"];
 	['...on GenericFile']: '__union' & GraphQLTypes["GenericFile"];
 	['...on Location']: '__union' & GraphQLTypes["Location"];
 	['...on MailingAddress']: '__union' & GraphQLTypes["MailingAddress"];
+	['...on Market']: '__union' & GraphQLTypes["Market"];
 	['...on MediaImage']: '__union' & GraphQLTypes["MediaImage"];
+	['...on MediaPresentation']: '__union' & GraphQLTypes["MediaPresentation"];
 	['...on Menu']: '__union' & GraphQLTypes["Menu"];
 	['...on MenuItem']: '__union' & GraphQLTypes["MenuItem"];
 	['...on Metafield']: '__union' & GraphQLTypes["Metafield"];
@@ -14163,25 +17479,28 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 };
 	/** Represents a resource that can be published to the Online Store sales channel. */
 ["OnlineStorePublishable"]: {
-	__typename:"Article" | "Blog" | "Collection" | "Page" | "Product",
+	__typename:"Article" | "Blog" | "Collection" | "Metaobject" | "Page" | "Product",
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: GraphQLTypes["URL"] | undefined
 	['...on Article']: '__union' & GraphQLTypes["Article"];
 	['...on Blog']: '__union' & GraphQLTypes["Blog"];
 	['...on Collection']: '__union' & GraphQLTypes["Collection"];
+	['...on Metaobject']: '__union' & GraphQLTypes["Metaobject"];
 	['...on Page']: '__union' & GraphQLTypes["Page"];
 	['...on Product']: '__union' & GraphQLTypes["Product"];
 };
 	/** An order is a customer’s completed request to purchase one or more products from a shop. An order is created when a customer completes the checkout process, during which time they provides an email address, billing address and payment information. */
 ["Order"]: {
 	__typename: "Order",
+	/** The address associated with the payment method. */
+	billingAddress?: GraphQLTypes["MailingAddress"] | undefined,
 	/** The reason for the order's cancellation. Returns `null` if the order wasn't canceled. */
 	cancelReason?: GraphQLTypes["OrderCancelReason"] | undefined,
 	/** The date and time when the order was canceled. Returns null if the order wasn't canceled. */
 	canceledAt?: GraphQLTypes["DateTime"] | undefined,
 	/** The code of the currency used for the payment. */
 	currencyCode: GraphQLTypes["CurrencyCode"],
-	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes are not included unless the order is a taxes-included order. */
+	/** The subtotal of line items and their discounts, excluding line items that have been removed. Does not contain order-level discounts, duties, shipping costs, or shipping discounts. Taxes aren't included unless the order is a taxes-included order. */
 	currentSubtotalPrice: GraphQLTypes["MoneyV2"],
 	/** The total cost of duties for the order, including refunds. */
 	currentTotalDuties?: GraphQLTypes["MoneyV2"] | undefined,
@@ -14189,7 +17508,7 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 	currentTotalPrice: GraphQLTypes["MoneyV2"],
 	/** The total of all taxes applied to the order, excluding taxes for returned line items. */
 	currentTotalTax: GraphQLTypes["MoneyV2"],
-	/** A list of the custom attributes added to the order. */
+	/** A list of the custom attributes added to the order. For example, whether an order is a customer's first. */
 	customAttributes: Array<GraphQLTypes["Attribute"]>,
 	/** The locale code in which this specific order happened. */
 	customerLocale?: string | undefined,
@@ -14205,14 +17524,13 @@ and [nodes](https://shopify.dev/api/admin-graphql/unstable/queries/nodes) querie
 	financialStatus?: GraphQLTypes["OrderFinancialStatus"] | undefined,
 	/** The fulfillment status for the order. */
 	fulfillmentStatus: GraphQLTypes["OrderFulfillmentStatus"],
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** List of the order’s line items. */
 	lineItems: GraphQLTypes["OrderLineItemConnection"],
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** Unique identifier for the order that appears on the order.
 For example, _#1000_ or _Store1001.
@@ -14300,7 +17618,7 @@ If no value is provided, it will be auto-generated based on current date and tim
 	discountAllocations: Array<GraphQLTypes["DiscountAllocation"]>,
 	/** The total price of the line item, including discounts, and displayed in the presentment currency. */
 	discountedTotalPrice: GraphQLTypes["MoneyV2"],
-	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it is displayed in the presentment currency. */
+	/** The total price of the line item, not including any discounts. The total price is calculated using the original unit price multiplied by the quantity, and it's displayed in the presentment currency. */
 	originalTotalPrice: GraphQLTypes["MoneyV2"],
 	/** The number of products variants associated to the line item. */
 	quantity: number,
@@ -14342,12 +17660,11 @@ If no value is provided, it will be auto-generated based on current date and tim
 	createdAt: GraphQLTypes["DateTime"],
 	/** A human-friendly unique string for the page automatically generated from its title. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
 	onlineStoreUrl?: GraphQLTypes["URL"] | undefined,
@@ -14355,6 +17672,8 @@ If no value is provided, it will be auto-generated based on current date and tim
 	seo?: GraphQLTypes["SEO"] | undefined,
 	/** The title of the page. */
 	title: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined,
 	/** The timestamp of the latest page update. */
 	updatedAt: GraphQLTypes["DateTime"]
 };
@@ -14410,7 +17729,7 @@ For more information, please read our [GraphQL Pagination Usage Guide](https://s
 	creditCard?: GraphQLTypes["CreditCard"] | undefined,
 	/** A message describing a processing error during asynchronous processing. */
 	errorMessage?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** A client-side generated token to identify a payment and perform idempotent operations.
 For more information, refer to
@@ -14437,16 +17756,41 @@ For more information, refer to
 	countryCode: GraphQLTypes["CountryCode"],
 	/** The three-letter code for the shop's primary currency. */
 	currencyCode: GraphQLTypes["CurrencyCode"],
-	/** A list of enabled currencies (ISO 4217 format) that the shop accepts. Merchants can enable currencies from their Shopify Payments settings in the Shopify admin. */
+	/** A list of enabled currencies (ISO 4217 format) that the shop accepts.
+Merchants can enable currencies from their Shopify Payments settings in the Shopify admin.
+ */
 	enabledPresentmentCurrencies: Array<GraphQLTypes["CurrencyCode"]>,
-	/** The shop’s Shopify Payments account id. */
+	/** The shop’s Shopify Payments account ID. */
 	shopifyPaymentsAccountId?: string | undefined,
 	/** List of the digital wallets which the shop supports. */
 	supportedDigitalWallets: Array<GraphQLTypes["DigitalWallet"]>
 };
 	/** The valid values for the types of payment token. */
 ["PaymentTokenType"]: PaymentTokenType;
-	/** A filter used to view a subset of products in a collection matching a specific price range. */
+	/** Decides the distribution of results. */
+["PredictiveSearchLimitScope"]: PredictiveSearchLimitScope;
+	/** A predictive search result represents a list of products, collections, pages, articles, and query suggestions
+that matches the predictive search query.
+ */
+["PredictiveSearchResult"]: {
+	__typename: "PredictiveSearchResult",
+	/** The articles that match the search query. */
+	articles: Array<GraphQLTypes["Article"]>,
+	/** The articles that match the search query. */
+	collections: Array<GraphQLTypes["Collection"]>,
+	/** The pages that match the search query. */
+	pages: Array<GraphQLTypes["Page"]>,
+	/** The products that match the search query. */
+	products: Array<GraphQLTypes["Product"]>,
+	/** The query suggestions that are relevant to the search query. */
+	queries: Array<GraphQLTypes["SearchQuerySuggestion"]>
+};
+	/** The types of search items to perform predictive search on. */
+["PredictiveSearchType"]: PredictiveSearchType;
+	/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+["PreferenceDeliveryMethodType"]: PreferenceDeliveryMethodType;
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific price range.
+ */
 ["PriceRangeFilter"]: {
 		/** The minimum price in the range. Defaults to zero. */
 	min?: number | undefined,
@@ -14465,68 +17809,98 @@ For more information, refer to
         	['...on MoneyV2']: '__union' & GraphQLTypes["MoneyV2"];
 	['...on PricingPercentageValue']: '__union' & GraphQLTypes["PricingPercentageValue"];
 };
-	/** A product represents an individual item for sale in a Shopify store. Products are often physical, but they don't have to be.
-For example, a digital download (such as a movie, music or ebook file) also qualifies as a product, as do services (such as equipment rental, work for hire, customization of another product or an extended warranty). */
+	/** The `Product` object lets you manage products in a merchant’s store.
+
+Products are the goods and services that merchants offer to customers.
+They can include various details such as title, description, price, images, and options such as size or color.
+You can use [product variants](/docs/api/storefront/latest/objects/ProductVariant)
+to create or update different versions of the same product.
+You can also add or update product [media](/docs/api/storefront/latest/interfaces/Media).
+Products can be organized by grouping them into a [collection](/docs/api/storefront/latest/objects/Collection).
+
+Learn more about working with [products and collections](/docs/storefronts/headless/building-with-the-storefront-api/products-collections).
+ */
 ["Product"]: {
 	__typename: "Product",
 	/** Indicates if at least one product variant is available for sale. */
 	availableForSale: boolean,
-	/** List of collections a product belongs to. */
+	/** A list of [collections](/docs/api/storefront/latest/objects/Collection) that include the product. */
 	collections: GraphQLTypes["CollectionConnection"],
-	/** The compare at price of the product across all variants. */
+	/** The [compare-at price range](https://help.shopify.com/manual/products/details/product-pricing/sale-pricing) of the product in the shop's default currency. */
 	compareAtPriceRange: GraphQLTypes["ProductPriceRange"],
 	/** The date and time when the product was created. */
 	createdAt: GraphQLTypes["DateTime"],
-	/** Stripped description of the product, single line with HTML tags removed. */
+	/** A single-line description of the product, with [HTML tags](https://developer.mozilla.org/en-US/docs/Web/HTML) removed. */
 	description: string,
-	/** The description of the product, complete with HTML formatting. */
+	/** The description of the product, with
+HTML tags. For example, the description might include
+bold `<strong></strong>` and italic `<i></i>` text.
+ */
 	descriptionHtml: GraphQLTypes["HTML"],
 	/** The featured image for the product.
 
 This field is functionally equivalent to `images(first: 1)`.
  */
 	featuredImage?: GraphQLTypes["Image"] | undefined,
-	/** A human-friendly unique string for the Product automatically generated from its title.
-They are used by the Liquid templating language to refer to objects.
+	/** A unique, human-readable string of the product's title.
+A handle can contain letters, hyphens (`-`), and numbers, but no spaces.
+The handle is used in the online store URL for the product.
  */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** List of images associated with the product. */
 	images: GraphQLTypes["ImageConnection"],
 	/** Whether the product is a gift card. */
 	isGiftCard: boolean,
-	/** The media associated with the product. */
+	/** The [media](/docs/apps/build/online-store/product-media) that are associated with the product. Valid media are images, 3D models, videos. */
 	media: GraphQLTypes["MediaConnection"],
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
-	/** The URL used for viewing the resource on the shop's Online Store. Returns `null` if the resource is currently not published to the Online Store sales channel. */
+	/** The product's URL on the online store.
+If `null`, then the product isn't published to the online store sales channel.
+ */
 	onlineStoreUrl?: GraphQLTypes["URL"] | undefined,
-	/** List of product options. */
+	/** A list of product options. The limit is defined by the [shop's resource limits for product options](/docs/api/admin-graphql/latest/objects/Shop#field-resourcelimits) (`Shop.resourceLimits.maxProductOptions`). */
 	options: Array<GraphQLTypes["ProductOption"]>,
-	/** The price range. */
+	/** The minimum and maximum prices of a product, expressed in decimal numbers.
+For example, if the product is priced between $10.00 and $50.00,
+then the price range is $10.00 - $50.00.
+ */
 	priceRange: GraphQLTypes["ProductPriceRange"],
-	/** A categorization that a product can be tagged with, commonly used for filtering and searching. */
+	/** The [product type](https://help.shopify.com/manual/products/details/product-type)
+that merchants define.
+ */
 	productType: string,
 	/** The date and time when the product was published to the channel. */
 	publishedAt: GraphQLTypes["DateTime"],
-	/** Whether the product can only be purchased with a selling plan. */
+	/** Whether the product can only be purchased with a [selling plan](/docs/apps/build/purchase-options/subscriptions/selling-plans). Products that are sold on subscription (`requiresSellingPlan: true`) can be updated only for online stores. If you update a product to be subscription-only (`requiresSellingPlan:false`), then the product is unpublished from all channels, except the online store. */
 	requiresSellingPlan: boolean,
-	/** A list of a product's available selling plan groups. A selling plan group represents a selling method. For example, 'Subscribe and save' is a selling method where customers pay for goods or services per delivery. A selling plan group contains individual selling plans. */
+	/** A list of all [selling plan groups](/docs/apps/build/purchase-options/subscriptions/selling-plans/build-a-selling-plan) that are associated with the product either directly, or through the product's variants. */
 	sellingPlanGroups: GraphQLTypes["SellingPlanGroupConnection"],
-	/** The product's SEO information. */
+	/** The [SEO title and description](https://help.shopify.com/manual/promoting-marketing/seo/adding-keywords)
+that are associated with a product.
+ */
 	seo: GraphQLTypes["SEO"],
-	/** A comma separated list of tags that have been added to the product.
-Additional access scope required for private apps: unauthenticated_read_product_tags.
+	/** A comma-separated list of searchable keywords that are
+associated with the product. For example, a merchant might apply the `sports`
+and `summer` tags to products that are associated with sportwear for summer.
+Updating `tags` overwrites any existing tags that were previously added to the product.
+To add new tags without overwriting existing tags,
+use the GraphQL Admin API's [`tagsAdd`](/docs/api/admin-graphql/latest/mutations/tagsadd)
+mutation.
  */
 	tags: Array<string>,
-	/** The product’s title. */
+	/** The name for the product that displays to customers. The title is used to construct the product's handle.
+For example, if a product is titled "Black Sunglasses", then the handle is `black-sunglasses`.
+ */
 	title: string,
-	/** The total quantity of inventory in stock for this Product. */
+	/** The quantity of inventory that's in stock. */
 	totalInventory?: number | undefined,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined,
 	/** The date and time when the product was last modified.
 A product's `updatedAt` value can change for different reasons. For example, if an order
 is placed for a product that has inventory tracking set up, then the inventory adjustment
@@ -14538,9 +17912,9 @@ This is useful for converting a user’s selection of product options into a sin
 If there is not a variant for the selected options, `null` will be returned.
  */
 	variantBySelectedOptions?: GraphQLTypes["ProductVariant"] | undefined,
-	/** List of the product’s variants. */
+	/** A list of [variants](/docs/api/storefront/latest/objects/ProductVariant) that are associated with the product. */
 	variants: GraphQLTypes["ProductVariantConnection"],
-	/** The product’s vendor name. */
+	/** The name of the product's vendor. */
 	vendor: string
 };
 	/** The set of valid sort keys for the ProductCollection query. */
@@ -14567,7 +17941,10 @@ If there is not a variant for the selected options, `null` will be returned.
 	/** The item at the end of ProductEdge. */
 	node: GraphQLTypes["Product"]
 };
-	/** A filter used to view a subset of products in a collection. */
+	/** The input fields for a filter used to view a subset of products in a collection.
+By default, the `available` and `price` filters are enabled. Filters are customized with the Shopify Search & Discovery app.
+Learn more about [customizing storefront filtering](https://help.shopify.com/manual/online-store/themes/customizing-themes/storefront-filters).
+ */
 ["ProductFilter"]: {
 		/** Filter on if the product is available for sale. */
 	available?: boolean | undefined,
@@ -14596,7 +17973,7 @@ Variants are selected based on permutations of these options.
  */
 ["ProductOption"]: {
 	__typename: "ProductOption",
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The product option’s name. */
 	name: string,
@@ -14611,9 +17988,14 @@ Variants are selected based on permutations of these options.
 	/** The lowest variant's price. */
 	minVariantPrice: GraphQLTypes["MoneyV2"]
 };
+	/** The recommendation intent that is used to generate product recommendations.
+You can use intent to generate product recommendations according to different strategies.
+ */
+["ProductRecommendationIntent"]: ProductRecommendationIntent;
 	/** The set of valid sort keys for the Product query. */
 ["ProductSortKeys"]: ProductSortKeys;
-	/** A product variant represents a different version of a product, such as differing sizes or differing colors. */
+	/** A product variant represents a different version of a product, such as differing sizes or differing colors.
+ */
 ["ProductVariant"]: {
 	__typename: "ProductVariant",
 	/** Indicates if the product variant is available for sale. */
@@ -14626,15 +18008,13 @@ Variants are selected based on permutations of these options.
 	compareAtPriceV2?: GraphQLTypes["MoneyV2"] | undefined,
 	/** Whether a product is out of stock but still available for purchase (used for backorders). */
 	currentlyNotInStock: boolean,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Image associated with the product variant. This field falls back to the product image if no image is available.
- */
+	/** Image associated with the product variant. This field falls back to the product image if no image is available. */
 	image?: GraphQLTypes["Image"] | undefined,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** The product variant’s price. */
 	price: GraphQLTypes["MoneyV2"],
@@ -14644,6 +18024,10 @@ Variants are selected based on permutations of these options.
 	product: GraphQLTypes["Product"],
 	/** The total sellable quantity of the variant for online sales channels. */
 	quantityAvailable?: number | undefined,
+	/** A list of quantity breaks for the product variant. */
+	quantityPriceBreaks: GraphQLTypes["QuantityPriceBreakConnection"],
+	/** The quantity rule for the product variant in a given context. */
+	quantityRule: GraphQLTypes["QuantityRule"],
 	/** Whether a customer needs to provide a shipping address when placing an order for the product variant. */
 	requiresShipping: boolean,
 	/** List of product options applied to the variant. */
@@ -14654,6 +18038,8 @@ Variants are selected based on permutations of these options.
 	sku?: string | undefined,
 	/** The in-store pickup availability of this variant by location. */
 	storeAvailability: GraphQLTypes["StoreAvailabilityConnection"],
+	/** Whether tax is charged when the product variant is sold. */
+	taxable: boolean,
 	/** The product variant’s title. */
 	title: string,
 	/** The unit price value for the variant based on the variant's measurement. */
@@ -14687,9 +18073,73 @@ Variants are selected based on permutations of these options.
 };
 	/** The set of valid sort keys for the ProductVariant query. */
 ["ProductVariantSortKeys"]: ProductVariantSortKeys;
+	/** Represents information about the buyer that is interacting with the cart. */
+["PurchasingCompany"]: {
+	__typename: "PurchasingCompany",
+	/** The company associated to the order or draft order. */
+	company: GraphQLTypes["Company"],
+	/** The company contact associated to the order or draft order. */
+	contact?: GraphQLTypes["CompanyContact"] | undefined,
+	/** The company location associated to the order or draft order. */
+	location: GraphQLTypes["CompanyLocation"]
+};
+	/** Quantity price breaks lets you offer different rates that are based on the
+amount of a specific variant being ordered.
+ */
+["QuantityPriceBreak"]: {
+	__typename: "QuantityPriceBreak",
+	/** Minimum quantity required to reach new quantity break price.
+ */
+	minimumQuantity: number,
+	/** The price of variant after reaching the minimum quanity.
+ */
+	price: GraphQLTypes["MoneyV2"]
+};
+	/** An auto-generated type for paginating through multiple QuantityPriceBreaks.
+ */
+["QuantityPriceBreakConnection"]: {
+	__typename: "QuantityPriceBreakConnection",
+	/** A list of edges. */
+	edges: Array<GraphQLTypes["QuantityPriceBreakEdge"]>,
+	/** A list of the nodes contained in QuantityPriceBreakEdge. */
+	nodes: Array<GraphQLTypes["QuantityPriceBreak"]>,
+	/** Information to aid in pagination. */
+	pageInfo: GraphQLTypes["PageInfo"]
+};
+	/** An auto-generated type which holds one QuantityPriceBreak and a cursor during pagination.
+ */
+["QuantityPriceBreakEdge"]: {
+	__typename: "QuantityPriceBreakEdge",
+	/** A cursor for use in pagination. */
+	cursor: string,
+	/** The item at the end of QuantityPriceBreakEdge. */
+	node: GraphQLTypes["QuantityPriceBreak"]
+};
+	/** The quantity rule for the product variant in a given context.
+ */
+["QuantityRule"]: {
+	__typename: "QuantityRule",
+	/** The value that specifies the quantity increment between minimum and maximum of the rule.
+Only quantities divisible by this value will be considered valid.
+
+The increment must be lower than or equal to the minimum and the maximum, and both minimum and maximum
+must be divisible by this value.
+ */
+	increment: number,
+	/** An optional value that defines the highest allowed quantity purchased by the customer.
+If defined, maximum must be lower than or equal to the minimum and must be a multiple of the increment.
+ */
+	maximum?: number | undefined,
+	/** The value that defines the lowest allowed quantity purchased by the customer.
+The minimum must be a multiple of the quantity rule's increment.
+ */
+	minimum: number
+};
 	/** The schema’s entry-point for queries. This acts as the public, top-level API from which all queries must start. */
 ["QueryRoot"]: {
 	__typename: "QueryRoot",
+	/** Fetch a specific Article by its ID. */
+	article?: GraphQLTypes["Article"] | undefined,
 	/** List of the shop's articles. */
 	articles: GraphQLTypes["ArticleConnection"],
 	/** Fetch a specific `Blog` by one of its unique attributes. */
@@ -14702,22 +18152,28 @@ Variants are selected based on permutations of these options.
 [Manage a cart with the Storefront API](https://shopify.dev/custom-storefronts/cart/manage).
  */
 	cart?: GraphQLTypes["Cart"] | undefined,
+	/** A poll for the status of the cart checkout completion and order creation.
+ */
+	cartCompletionAttempt?: GraphQLTypes["CartCompletionAttemptResult"] | undefined,
 	/** Fetch a specific `Collection` by one of its unique attributes. */
 	collection?: GraphQLTypes["Collection"] | undefined,
 	/** Find a collection by its handle. */
 	collectionByHandle?: GraphQLTypes["Collection"] | undefined,
 	/** List of the shop’s collections. */
 	collections: GraphQLTypes["CollectionConnection"],
-	/** Find a customer by its access token. */
+	/** The customer associated with the given access token. Tokens are obtained by using the
+[`customerAccessTokenCreate` mutation](https://shopify.dev/docs/api/storefront/latest/mutations/customerAccessTokenCreate).
+ */
 	customer?: GraphQLTypes["Customer"] | undefined,
 	/** Returns the localized experiences configured for the shop. */
 	localization: GraphQLTypes["Localization"],
 	/** List of the shop's locations that support in-store pickup.
 
 When sorting by distance, you must specify a location via the `near` argument.
+
  */
 	locations: GraphQLTypes["LocationConnection"],
-	/** A storefront menu. */
+	/** Retrieve a [navigation menu](https://help.shopify.com/manual/online-store/menus-and-links) by its handle. */
 	menu?: GraphQLTypes["Menu"] | undefined,
 	/** Fetch a specific Metaobject by one of its unique identifiers. */
 	metaobject?: GraphQLTypes["Metaobject"] | undefined,
@@ -14733,6 +18189,8 @@ When sorting by distance, you must specify a location via the `near` argument.
 	pageByHandle?: GraphQLTypes["Page"] | undefined,
 	/** List of the shop's pages. */
 	pages: GraphQLTypes["PageConnection"],
+	/** List of the predictive search results. */
+	predictiveSearch?: GraphQLTypes["PredictiveSearchResult"] | undefined,
 	/** Fetch a specific `Product` by one of its unique attributes. */
 	product?: GraphQLTypes["Product"] | undefined,
 	/** Find a product by its handle. */
@@ -14748,10 +18206,12 @@ Additional access scope required: unauthenticated_read_product_tags.
 	productTags: GraphQLTypes["StringConnection"],
 	/** List of product types for the shop's products that are published to your app. */
 	productTypes: GraphQLTypes["StringConnection"],
-	/** List of the shop’s products. */
+	/** Returns a list of the shop's products. For storefront search, use the [`search`](https://shopify.dev/docs/api/storefront/latest/queries/search) query. */
 	products: GraphQLTypes["ProductConnection"],
 	/** The list of public Storefront API versions, including supported, release candidate and unstable versions. */
 	publicApiVersions: Array<GraphQLTypes["ApiVersion"]>,
+	/** List of the search results. */
+	search: GraphQLTypes["SearchResultItemConnection"],
 	/** The shop associated with the storefront access token. */
 	shop: GraphQLTypes["Shop"],
 	/** A list of redirects for a shop. */
@@ -14781,6 +18241,58 @@ was created by a Shopify Script.
 	/** The value of the discount application. */
 	value: GraphQLTypes["PricingValue"]
 };
+	/** Specifies whether to perform a partial word match on the last search term. */
+["SearchPrefixQueryType"]: SearchPrefixQueryType;
+	/** A search query suggestion. */
+["SearchQuerySuggestion"]: {
+	__typename: "SearchQuerySuggestion",
+	/** The text of the search query suggestion with highlighted HTML tags. */
+	styledText: string,
+	/** The text of the search query suggestion. */
+	text: string,
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined
+};
+	/** A search result that matches the search query.
+ */
+["SearchResultItem"]:{
+        	__typename:"Article" | "Page" | "Product"
+        	['...on Article']: '__union' & GraphQLTypes["Article"];
+	['...on Page']: '__union' & GraphQLTypes["Page"];
+	['...on Product']: '__union' & GraphQLTypes["Product"];
+};
+	/** An auto-generated type for paginating through multiple SearchResultItems.
+ */
+["SearchResultItemConnection"]: {
+	__typename: "SearchResultItemConnection",
+	/** A list of edges. */
+	edges: Array<GraphQLTypes["SearchResultItemEdge"]>,
+	/** A list of the nodes contained in SearchResultItemEdge. */
+	nodes: Array<GraphQLTypes["SearchResultItem"]>,
+	/** Information to aid in pagination. */
+	pageInfo: GraphQLTypes["PageInfo"],
+	/** A list of available filters. */
+	productFilters: Array<GraphQLTypes["Filter"]>,
+	/** The total number of results. */
+	totalCount: number
+};
+	/** An auto-generated type which holds one SearchResultItem and a cursor during pagination.
+ */
+["SearchResultItemEdge"]: {
+	__typename: "SearchResultItemEdge",
+	/** A cursor for use in pagination. */
+	cursor: string,
+	/** The item at the end of SearchResultItemEdge. */
+	node: GraphQLTypes["SearchResultItem"]
+};
+	/** The set of valid sort keys for the search query. */
+["SearchSortKeys"]: SearchSortKeys;
+	/** The types of search items to perform search within. */
+["SearchType"]: SearchType;
+	/** Specifies whether to display results for unavailable products. */
+["SearchUnavailableProductsType"]: SearchUnavailableProductsType;
+	/** Specifies the list of resource fields to search. */
+["SearchableField"]: SearchableField;
 	/** Properties used by customers to select a product variant.
 Products can have multiple options, like different sizes or colors.
  */
@@ -14791,7 +18303,7 @@ Products can have multiple options, like different sizes or colors.
 	/** The product option’s value. */
 	value: string
 };
-	/** Specifies the input fields required for a selected option. */
+	/** The input fields required for a selected option. */
 ["SelectedOptionInput"]: {
 		/** The product option’s name. */
 	name: string,
@@ -14805,7 +18317,7 @@ Products can have multiple options, like different sizes or colors.
 	checkoutCharge: GraphQLTypes["SellingPlanCheckoutCharge"],
 	/** The description of the selling plan. */
 	description?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The name of the selling plan. For example, '6 weeks of prepaid granola, delivered weekly'. */
 	name: string,
@@ -15004,12 +18516,11 @@ Individual selling plans contribute their options to the associated selling plan
 	brand?: GraphQLTypes["Brand"] | undefined,
 	/** A description of the shop. */
 	description?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
-	/** Returns a metafield found by namespace and key. */
+	/** A [custom field](https://shopify.dev/docs/apps/build/custom-data), including its `namespace` and `key`, that's associated with a Shopify resource for the purposes of adding and storing additional information. */
 	metafield?: GraphQLTypes["Metafield"] | undefined,
-	/** The metafields associated with the resource matching the supplied list of namespaces and keys.
- */
+	/** A list of [custom fields](/docs/apps/build/custom-data) that a merchant associates with a Shopify resource. */
 	metafields: Array<GraphQLTypes["Metafield"] | undefined>,
 	/** A string representing the way currency is formatted when the currency isn’t specified. */
 	moneyFormat: string,
@@ -15032,6 +18543,14 @@ Individual selling plans contribute their options to the associated selling plan
 	/** The shop’s terms of service. */
 	termsOfService?: GraphQLTypes["ShopPolicy"] | undefined
 };
+	/** The input fields for submitting Shop Pay payment method information for checkout.
+ */
+["ShopPayWalletContentInput"]: {
+		/** The customer's billing address. */
+	billingAddress: GraphQLTypes["MailingAddressInput"],
+	/** Session token for transaction. */
+	sessionToken: string
+};
 	/** Policy that a merchant has configured for their store, such as their refund or privacy policy. */
 ["ShopPolicy"]: {
 	__typename: "ShopPolicy",
@@ -15039,7 +18558,7 @@ Individual selling plans contribute their options to the associated selling plan
 	body: string,
 	/** Policy’s handle. */
 	handle: string,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** Policy’s title. */
 	title: string,
@@ -15056,7 +18575,7 @@ Otherwise, the policy will return the merchant-configured value.
 	body: string,
 	/** The handle of the policy. */
 	handle: string,
-	/** The unique identifier of the policy. A default policy doesn't have an ID. */
+	/** The unique ID of the policy. A default policy doesn't have an ID. */
 	id?: string | undefined,
 	/** The title of the policy. */
 	title: string,
@@ -15073,7 +18592,9 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	/** The location where this product variant is stocked at. */
 	location: GraphQLTypes["Location"],
 	/** Returns the estimated amount of time it takes for pickup to be ready (Example: Usually ready in 24 hours). */
-	pickUpTime: string
+	pickUpTime: string,
+	/** The quantity of the product variant in-stock at this location. */
+	quantityAvailable: number
 };
 	/** An auto-generated type for paginating through multiple StoreAvailabilities.
  */
@@ -15095,7 +18616,7 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	/** The item at the end of StoreAvailabilityEdge. */
 	node: GraphQLTypes["StoreAvailability"]
 };
-	/** An auto-generated type for paginating through a list of Strings.
+	/** An auto-generated type for paginating through multiple Strings.
  */
 ["StringConnection"]: {
 	__typename: "StringConnection",
@@ -15113,6 +18634,53 @@ Local pick-up must be enabled in the  store's shipping settings, otherwise this 
 	/** The item at the end of StringEdge. */
 	node: string
 };
+	/** An error that occurred during cart submit for completion. */
+["SubmissionError"]: {
+	__typename: "SubmissionError",
+	/** The error code. */
+	code: GraphQLTypes["SubmissionErrorCode"],
+	/** The error message. */
+	message?: string | undefined
+};
+	/** The code of the error that occurred during cart submit for completion. */
+["SubmissionErrorCode"]: SubmissionErrorCode;
+	/** Cart submit for checkout completion is successful. */
+["SubmitAlreadyAccepted"]: {
+	__typename: "SubmitAlreadyAccepted",
+	/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId: string
+};
+	/** Cart submit for checkout completion failed. */
+["SubmitFailed"]: {
+	__typename: "SubmitFailed",
+	/** The URL of the checkout for the cart. */
+	checkoutUrl?: GraphQLTypes["URL"] | undefined,
+	/** The list of errors that occurred from executing the mutation. */
+	errors: Array<GraphQLTypes["SubmissionError"]>
+};
+	/** Cart submit for checkout completion is already accepted. */
+["SubmitSuccess"]: {
+	__typename: "SubmitSuccess",
+	/** The ID of the cart completion attempt that will be used for polling for the result. */
+	attemptId: string
+};
+	/** Cart submit for checkout completion is throttled. */
+["SubmitThrottled"]: {
+	__typename: "SubmitThrottled",
+	/** UTC date time string that indicates the time after which clients should make their next
+poll request. Any poll requests sent before this time will be ignored. Use this value to schedule the
+next poll request.
+ */
+	pollAfter: GraphQLTypes["DateTime"]
+};
+	/** Color and image for visual representation. */
+["Swatch"]: {
+	__typename: "Swatch",
+	/** The swatch color. */
+	color?: GraphQLTypes["Color"] | undefined,
+	/** The swatch image. */
+	image?: GraphQLTypes["MediaImage"] | undefined
+};
 	/** Specifies the fields required to complete a checkout with
 a tokenized payment.
  */
@@ -15125,12 +18693,23 @@ a tokenized payment.
 	billingAddress: GraphQLTypes["MailingAddressInput"],
 	/** A simple string or JSON containing the required payment data for the tokenized payment. */
 	paymentData: string,
-	/** Whether to execute the payment in test mode, if possible. Test mode is not supported in production stores. Defaults to `false`. */
+	/** Whether to execute the payment in test mode, if possible. Test mode isn't supported in production stores. Defaults to `false`. */
 	test?: boolean | undefined,
 	/** Public Hash Key used for AndroidPay payments only. */
 	identifier?: string | undefined,
 	/** The type of payment token. */
 	type: GraphQLTypes["PaymentTokenType"]
+};
+	/** Represents a resource that you can track the origin of the search traffic. */
+["Trackable"]: {
+	__typename:"Article" | "Collection" | "Page" | "Product" | "SearchQuerySuggestion",
+	/** URL parameters to be added to a page URL to track the origin of on-site search traffic for [analytics reporting](https://help.shopify.com/manual/reports-and-analytics/shopify-reports/report-types/default-reports/behaviour-reports). Returns a result when accessed through the [search](https://shopify.dev/docs/api/storefront/current/queries/search) or [predictiveSearch](https://shopify.dev/docs/api/storefront/current/queries/predictiveSearch) queries, otherwise returns null. */
+	trackingParameters?: string | undefined
+	['...on Article']: '__union' & GraphQLTypes["Article"];
+	['...on Collection']: '__union' & GraphQLTypes["Collection"];
+	['...on Page']: '__union' & GraphQLTypes["Page"];
+	['...on Product']: '__union' & GraphQLTypes["Product"];
+	['...on SearchQuerySuggestion']: '__union' & GraphQLTypes["SearchQuerySuggestion"];
 };
 	/** An object representing exchange of money for a product or service. */
 ["Transaction"]: {
@@ -15155,8 +18734,8 @@ a tokenized payment.
 	/** Represents an [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986) and
 [RFC 3987](https://datatracker.ietf.org/doc/html/rfc3987)-compliant URI string.
 
-For example, `"https://johns-apparel.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
-(`johns-apparel.myshopify.com`).
+For example, `"https://example.myshopify.com"` is a valid URL. It includes a scheme (`https`) and a host
+(`example.myshopify.com`).
  */
 ["URL"]: "scalar" & { name: "URL" };
 	/** The measurement used to calculate a unit price for a product variant (e.g. $9.99 / 100ml).
@@ -15223,7 +18802,7 @@ Example value: `"50"`.
 	/** The error message. */
 	message: string
 };
-	/** A filter used to view a subset of products in a collection matching a specific variant option. */
+	/** The input fields for a filter used to view a subset of products in a collection matching a specific variant option. */
 ["VariantOptionFilter"]: {
 		/** The name of the variant option to filter on. */
 	name: string,
@@ -15235,10 +18814,12 @@ Example value: `"50"`.
 	__typename: "Video",
 	/** A word or phrase to share the nature or contents of a media. */
 	alt?: string | undefined,
-	/** A globally-unique identifier. */
+	/** A globally-unique ID. */
 	id: string,
 	/** The media content type. */
 	mediaContentType: GraphQLTypes["MediaContentType"],
+	/** The presentation for a media. */
+	presentation?: GraphQLTypes["MediaPresentation"] | undefined,
 	/** The preview image for the media. */
 	previewImage?: GraphQLTypes["Image"] | undefined,
 	/** The sources for a video. */
@@ -15287,13 +18868,47 @@ export const enum CardBrand {
 	DINERS_CLUB = "DINERS_CLUB",
 	JCB = "JCB"
 }
+/** Represents how credit card details are provided for a direct payment.
+ */
+export const enum CartCardSource {
+	SAVED_CREDIT_CARD = "SAVED_CREDIT_CARD"
+}
+/** Defines what type of merchandise is in the delivery group.
+ */
+export const enum CartDeliveryGroupType {
+	SUBSCRIPTION = "SUBSCRIPTION",
+	ONE_TIME_PURCHASE = "ONE_TIME_PURCHASE"
+}
 /** Possible error codes that can be returned by `CartUserError`. */
 export const enum CartErrorCode {
 	INVALID = "INVALID",
 	LESS_THAN = "LESS_THAN",
 	INVALID_MERCHANDISE_LINE = "INVALID_MERCHANDISE_LINE",
 	MISSING_DISCOUNT_CODE = "MISSING_DISCOUNT_CODE",
-	MISSING_NOTE = "MISSING_NOTE"
+	MISSING_NOTE = "MISSING_NOTE",
+	INVALID_DELIVERY_GROUP = "INVALID_DELIVERY_GROUP",
+	INVALID_DELIVERY_OPTION = "INVALID_DELIVERY_OPTION",
+	INVALID_PAYMENT = "INVALID_PAYMENT",
+	PAYMENT_METHOD_NOT_SUPPORTED = "PAYMENT_METHOD_NOT_SUPPORTED",
+	INVALID_PAYMENT_EMPTY_CART = "INVALID_PAYMENT_EMPTY_CART",
+	VALIDATION_CUSTOM = "VALIDATION_CUSTOM",
+	INVALID_METAFIELDS = "INVALID_METAFIELDS",
+	MISSING_CUSTOMER_ACCESS_TOKEN = "MISSING_CUSTOMER_ACCESS_TOKEN",
+	INVALID_COMPANY_LOCATION = "INVALID_COMPANY_LOCATION",
+	INVALID_INCREMENT = "INVALID_INCREMENT",
+	MINIMUM_NOT_MET = "MINIMUM_NOT_MET",
+	MAXIMUM_EXCEEDED = "MAXIMUM_EXCEEDED",
+	ADDRESS_FIELD_IS_REQUIRED = "ADDRESS_FIELD_IS_REQUIRED",
+	ADDRESS_FIELD_IS_TOO_LONG = "ADDRESS_FIELD_IS_TOO_LONG",
+	ADDRESS_FIELD_CONTAINS_EMOJIS = "ADDRESS_FIELD_CONTAINS_EMOJIS",
+	ADDRESS_FIELD_CONTAINS_HTML_TAGS = "ADDRESS_FIELD_CONTAINS_HTML_TAGS",
+	ADDRESS_FIELD_CONTAINS_URL = "ADDRESS_FIELD_CONTAINS_URL",
+	ADDRESS_FIELD_DOES_NOT_MATCH_EXPECTED_PATTERN = "ADDRESS_FIELD_DOES_NOT_MATCH_EXPECTED_PATTERN",
+	INVALID_ZIP_CODE_FOR_PROVINCE = "INVALID_ZIP_CODE_FOR_PROVINCE",
+	INVALID_ZIP_CODE_FOR_COUNTRY = "INVALID_ZIP_CODE_FOR_COUNTRY",
+	ZIP_CODE_NOT_SUPPORTED = "ZIP_CODE_NOT_SUPPORTED",
+	PROVINCE_NOT_FOUND = "PROVINCE_NOT_FOUND",
+	UNSPECIFIED_ADDRESS_ERROR = "UNSPECIFIED_ADDRESS_ERROR"
 }
 /** Possible error codes that can be returned by `CheckoutUserError`. */
 export const enum CheckoutErrorCode {
@@ -15341,7 +18956,8 @@ export const enum CheckoutErrorCode {
 	THROTTLED_DURING_CHECKOUT = "THROTTLED_DURING_CHECKOUT",
 	EXPIRED_QUEUE_TOKEN = "EXPIRED_QUEUE_TOKEN",
 	INVALID_QUEUE_TOKEN = "INVALID_QUEUE_TOKEN",
-	INVALID_COUNTRY_AND_CURRENCY = "INVALID_COUNTRY_AND_CURRENCY"
+	INVALID_COUNTRY_AND_CURRENCY = "INVALID_COUNTRY_AND_CURRENCY",
+	PRODUCT_NOT_AVAILABLE = "PRODUCT_NOT_AVAILABLE"
 }
 /** The set of valid sort keys for the Collection query. */
 export const enum CollectionSortKeys {
@@ -15349,6 +18965,22 @@ export const enum CollectionSortKeys {
 	UPDATED_AT = "UPDATED_AT",
 	ID = "ID",
 	RELEVANCE = "RELEVANCE"
+}
+/** The code of the error that occurred during a cart completion attempt. */
+export const enum CompletionErrorCode {
+	ERROR = "ERROR",
+	INVENTORY_RESERVATION_ERROR = "INVENTORY_RESERVATION_ERROR",
+	PAYMENT_ERROR = "PAYMENT_ERROR",
+	PAYMENT_TRANSIENT_ERROR = "PAYMENT_TRANSIENT_ERROR",
+	PAYMENT_AMOUNT_TOO_SMALL = "PAYMENT_AMOUNT_TOO_SMALL",
+	PAYMENT_GATEWAY_NOT_ENABLED_ERROR = "PAYMENT_GATEWAY_NOT_ENABLED_ERROR",
+	PAYMENT_INSUFFICIENT_FUNDS = "PAYMENT_INSUFFICIENT_FUNDS",
+	PAYMENT_INVALID_PAYMENT_METHOD = "PAYMENT_INVALID_PAYMENT_METHOD",
+	PAYMENT_INVALID_CURRENCY = "PAYMENT_INVALID_CURRENCY",
+	PAYMENT_INVALID_CREDIT_CARD = "PAYMENT_INVALID_CREDIT_CARD",
+	PAYMENT_INVALID_BILLING_ADDRESS = "PAYMENT_INVALID_BILLING_ADDRESS",
+	PAYMENT_CARD_DECLINED = "PAYMENT_CARD_DECLINED",
+	PAYMENT_CALL_ISSUER = "PAYMENT_CALL_ISSUER"
 }
 /** The code designating a country/region, which generally follows ISO 3166-1 alpha-2 guidelines.
 If a territory doesn't have a country code value in the `CountryCode` enum, then it might be considered a subdivision
@@ -15610,7 +19242,8 @@ export const enum CropRegion {
 	LEFT = "LEFT",
 	RIGHT = "RIGHT"
 }
-/** The three-letter currency codes that represent the world currencies used in stores. These include standard ISO 4217 codes, legacy codes,
+/** The three-letter currency codes that represent the world currencies used in
+stores. These include standard ISO 4217 codes, legacy codes,
 and non-standard codes.
  */
 export const enum CurrencyCode {
@@ -15658,9 +19291,12 @@ export const enum CurrencyCode {
 	DOP = "DOP",
 	XCD = "XCD",
 	EGP = "EGP",
+	ERN = "ERN",
 	ETB = "ETB",
+	FKP = "FKP",
 	XPF = "XPF",
 	FJD = "FJD",
+	GIP = "GIP",
 	GMD = "GMD",
 	GHS = "GHS",
 	GTQ = "GTQ",
@@ -15681,6 +19317,7 @@ export const enum CurrencyCode {
 	JOD = "JOD",
 	KZT = "KZT",
 	KES = "KES",
+	KID = "KID",
 	KWD = "KWD",
 	KGS = "KGS",
 	LAK = "LAK",
@@ -15694,6 +19331,7 @@ export const enum CurrencyCode {
 	MOP = "MOP",
 	MWK = "MWK",
 	MVR = "MVR",
+	MRU = "MRU",
 	MXN = "MXN",
 	MYR = "MYR",
 	MUR = "MUR",
@@ -15721,11 +19359,13 @@ export const enum CurrencyCode {
 	RUB = "RUB",
 	RWF = "RWF",
 	WST = "WST",
+	SHP = "SHP",
 	SAR = "SAR",
 	RSD = "RSD",
 	SCR = "SCR",
 	SGD = "SGD",
 	SDG = "SDG",
+	SOS = "SOS",
 	SYP = "SYP",
 	ZAR = "ZAR",
 	KRW = "KRW",
@@ -15749,6 +19389,7 @@ export const enum CurrencyCode {
 	UYU = "UYU",
 	UZS = "UZS",
 	VUV = "VUV",
+	VES = "VES",
 	VND = "VND",
 	XOF = "XOF",
 	YER = "YER",
@@ -15756,24 +19397,16 @@ export const enum CurrencyCode {
 	BYN = "BYN",
 	BYR = "BYR",
 	DJF = "DJF",
-	ERN = "ERN",
-	FKP = "FKP",
-	GIP = "GIP",
 	GNF = "GNF",
 	IRR = "IRR",
-	KID = "KID",
 	LYD = "LYD",
-	MRU = "MRU",
 	SLL = "SLL",
-	SHP = "SHP",
-	SOS = "SOS",
 	STD = "STD",
 	STN = "STN",
 	TJS = "TJS",
 	TOP = "TOP",
 	VED = "VED",
 	VEF = "VEF",
-	VES = "VES",
 	XXX = "XXX"
 }
 /** Possible error codes that can be returned by `CustomerUserError`. */
@@ -15793,6 +19426,12 @@ export const enum CustomerErrorCode {
 	NOT_FOUND = "NOT_FOUND",
 	BAD_DOMAIN = "BAD_DOMAIN",
 	INVALID_MULTIPASS_REQUEST = "INVALID_MULTIPASS_REQUEST"
+}
+/** Defines the types of available validation strategies for delivery addresses.
+ */
+export const enum DeliveryAddressValidationStrategy {
+	COUNTRY_CODE_ONLY = "COUNTRY_CODE_ONLY",
+	STRICT = "STRICT"
 }
 /** List of different delivery method types. */
 export const enum DeliveryMethodType {
@@ -15832,6 +19471,13 @@ export const enum DiscountApplicationTargetType {
 	LINE_ITEM = "LINE_ITEM",
 	SHIPPING_LINE = "SHIPPING_LINE"
 }
+/** Defines how to present the filter values, specifies the presentation of the filter.
+ */
+export const enum FilterPresentation {
+	IMAGE = "IMAGE",
+	SWATCH = "SWATCH",
+	TEXT = "TEXT"
+}
 /** The type of data that the filter group represents.
 
 For more information, refer to [Filter products in a collection with the Storefront API]
@@ -15848,7 +19494,7 @@ export const enum ImageContentType {
 	JPG = "JPG",
 	WEBP = "WEBP"
 }
-/** ISO 639-1 language codes supported by Shopify. */
+/** Language codes supported by Shopify. */
 export const enum LanguageCode {
 	AF = "AF",
 	AK = "AK",
@@ -15865,6 +19511,7 @@ export const enum LanguageCode {
 	BS = "BS",
 	CA = "CA",
 	CE = "CE",
+	CKB = "CKB",
 	CS = "CS",
 	CY = "CY",
 	DA = "DA",
@@ -15880,6 +19527,7 @@ export const enum LanguageCode {
 	FA = "FA",
 	FF = "FF",
 	FI = "FI",
+	FIL = "FIL",
 	FO = "FO",
 	FR = "FR",
 	FY = "FY",
@@ -15949,6 +19597,8 @@ export const enum LanguageCode {
 	RO = "RO",
 	RU = "RU",
 	RW = "RW",
+	SA = "SA",
+	SC = "SC",
 	SD = "SD",
 	SE = "SE",
 	SG = "SG",
@@ -15986,7 +19636,10 @@ export const enum LanguageCode {
 	ZH = "ZH",
 	PT = "PT",
 	CU = "CU",
-	VO = "VO"
+	VO = "VO",
+	LA = "LA",
+	SH = "SH",
+	MO = "MO"
 }
 /** The set of valid sort keys for the Location query. */
 export const enum LocationSortKeys {
@@ -16007,6 +19660,11 @@ export const enum MediaHost {
 	YOUTUBE = "YOUTUBE",
 	VIMEO = "VIMEO"
 }
+/** The possible formats for a media presentation. */
+export const enum MediaPresentationFormat {
+	MODEL_VIEWER = "MODEL_VIEWER",
+	IMAGE = "IMAGE"
+}
 /** A menu item type. */
 export const enum MenuItemType {
 	FRONTPAGE = "FRONTPAGE",
@@ -16019,7 +19677,26 @@ export const enum MenuItemType {
 	ARTICLE = "ARTICLE",
 	SEARCH = "SEARCH",
 	SHOP_POLICY = "SHOP_POLICY",
-	HTTP = "HTTP"
+	HTTP = "HTTP",
+	METAOBJECT = "METAOBJECT",
+	CUSTOMER_ACCOUNT_PAGE = "CUSTOMER_ACCOUNT_PAGE"
+}
+/** Possible error codes that can be returned by `MetafieldDeleteUserError`. */
+export const enum MetafieldDeleteErrorCode {
+	INVALID_OWNER = "INVALID_OWNER",
+	METAFIELD_DOES_NOT_EXIST = "METAFIELD_DOES_NOT_EXIST"
+}
+/** Possible error codes that can be returned by `MetafieldsSetUserError`. */
+export const enum MetafieldsSetUserErrorCode {
+	BLANK = "BLANK",
+	INCLUSION = "INCLUSION",
+	LESS_THAN_OR_EQUAL_TO = "LESS_THAN_OR_EQUAL_TO",
+	PRESENT = "PRESENT",
+	TOO_SHORT = "TOO_SHORT",
+	TOO_LONG = "TOO_LONG",
+	INVALID_OWNER = "INVALID_OWNER",
+	INVALID_VALUE = "INVALID_VALUE",
+	INVALID_TYPE = "INVALID_TYPE"
 }
 /** Represents the reason for the order's cancellation. */
 export const enum OrderCancelReason {
@@ -16027,6 +19704,7 @@ export const enum OrderCancelReason {
 	DECLINED = "DECLINED",
 	FRAUD = "FRAUD",
 	INVENTORY = "INVENTORY",
+	STAFF = "STAFF",
 	OTHER = "OTHER"
 }
 /** Represents the order's current financial status. */
@@ -16073,6 +19751,25 @@ export const enum PaymentTokenType {
 	GOOGLE_PAY = "GOOGLE_PAY",
 	STRIPE_VAULT_TOKEN = "STRIPE_VAULT_TOKEN"
 }
+/** Decides the distribution of results. */
+export const enum PredictiveSearchLimitScope {
+	ALL = "ALL",
+	EACH = "EACH"
+}
+/** The types of search items to perform predictive search on. */
+export const enum PredictiveSearchType {
+	COLLECTION = "COLLECTION",
+	PRODUCT = "PRODUCT",
+	PAGE = "PAGE",
+	ARTICLE = "ARTICLE",
+	QUERY = "QUERY"
+}
+/** The preferred delivery methods such as shipping, local pickup or through pickup points. */
+export const enum PreferenceDeliveryMethodType {
+	SHIPPING = "SHIPPING",
+	PICK_UP = "PICK_UP",
+	PICKUP_POINT = "PICKUP_POINT"
+}
 /** The set of valid sort keys for the ProductCollection query. */
 export const enum ProductCollectionSortKeys {
 	TITLE = "TITLE",
@@ -16097,6 +19794,13 @@ export const enum ProductMediaSortKeys {
 	ID = "ID",
 	RELEVANCE = "RELEVANCE"
 }
+/** The recommendation intent that is used to generate product recommendations.
+You can use intent to generate product recommendations according to different strategies.
+ */
+export const enum ProductRecommendationIntent {
+	RELATED = "RELATED",
+	COMPLEMENTARY = "COMPLEMENTARY"
+}
 /** The set of valid sort keys for the Product query. */
 export const enum ProductSortKeys {
 	TITLE = "TITLE",
@@ -16117,10 +19821,140 @@ export const enum ProductVariantSortKeys {
 	ID = "ID",
 	RELEVANCE = "RELEVANCE"
 }
+/** Specifies whether to perform a partial word match on the last search term. */
+export const enum SearchPrefixQueryType {
+	LAST = "LAST",
+	NONE = "NONE"
+}
+/** The set of valid sort keys for the search query. */
+export const enum SearchSortKeys {
+	PRICE = "PRICE",
+	RELEVANCE = "RELEVANCE"
+}
+/** The types of search items to perform search within. */
+export const enum SearchType {
+	PRODUCT = "PRODUCT",
+	PAGE = "PAGE",
+	ARTICLE = "ARTICLE"
+}
+/** Specifies whether to display results for unavailable products. */
+export const enum SearchUnavailableProductsType {
+	SHOW = "SHOW",
+	HIDE = "HIDE",
+	LAST = "LAST"
+}
+/** Specifies the list of resource fields to search. */
+export const enum SearchableField {
+	AUTHOR = "AUTHOR",
+	BODY = "BODY",
+	PRODUCT_TYPE = "PRODUCT_TYPE",
+	TAG = "TAG",
+	TITLE = "TITLE",
+	VARIANTS_BARCODE = "VARIANTS_BARCODE",
+	VARIANTS_SKU = "VARIANTS_SKU",
+	VARIANTS_TITLE = "VARIANTS_TITLE",
+	VENDOR = "VENDOR"
+}
 /** The checkout charge when the full amount isn't charged at checkout. */
 export const enum SellingPlanCheckoutChargeType {
 	PERCENTAGE = "PERCENTAGE",
 	PRICE = "PRICE"
+}
+/** The code of the error that occurred during cart submit for completion. */
+export const enum SubmissionErrorCode {
+	ERROR = "ERROR",
+	NO_DELIVERY_GROUP_SELECTED = "NO_DELIVERY_GROUP_SELECTED",
+	BUYER_IDENTITY_EMAIL_IS_INVALID = "BUYER_IDENTITY_EMAIL_IS_INVALID",
+	BUYER_IDENTITY_EMAIL_REQUIRED = "BUYER_IDENTITY_EMAIL_REQUIRED",
+	BUYER_IDENTITY_PHONE_IS_INVALID = "BUYER_IDENTITY_PHONE_IS_INVALID",
+	DELIVERY_ADDRESS1_INVALID = "DELIVERY_ADDRESS1_INVALID",
+	DELIVERY_ADDRESS1_REQUIRED = "DELIVERY_ADDRESS1_REQUIRED",
+	DELIVERY_ADDRESS1_TOO_LONG = "DELIVERY_ADDRESS1_TOO_LONG",
+	DELIVERY_ADDRESS2_INVALID = "DELIVERY_ADDRESS2_INVALID",
+	DELIVERY_ADDRESS2_REQUIRED = "DELIVERY_ADDRESS2_REQUIRED",
+	DELIVERY_ADDRESS2_TOO_LONG = "DELIVERY_ADDRESS2_TOO_LONG",
+	DELIVERY_CITY_INVALID = "DELIVERY_CITY_INVALID",
+	DELIVERY_CITY_REQUIRED = "DELIVERY_CITY_REQUIRED",
+	DELIVERY_CITY_TOO_LONG = "DELIVERY_CITY_TOO_LONG",
+	DELIVERY_COMPANY_INVALID = "DELIVERY_COMPANY_INVALID",
+	DELIVERY_COMPANY_REQUIRED = "DELIVERY_COMPANY_REQUIRED",
+	DELIVERY_COMPANY_TOO_LONG = "DELIVERY_COMPANY_TOO_LONG",
+	DELIVERY_COUNTRY_REQUIRED = "DELIVERY_COUNTRY_REQUIRED",
+	DELIVERY_FIRST_NAME_INVALID = "DELIVERY_FIRST_NAME_INVALID",
+	DELIVERY_FIRST_NAME_REQUIRED = "DELIVERY_FIRST_NAME_REQUIRED",
+	DELIVERY_FIRST_NAME_TOO_LONG = "DELIVERY_FIRST_NAME_TOO_LONG",
+	DELIVERY_INVALID_POSTAL_CODE_FOR_COUNTRY = "DELIVERY_INVALID_POSTAL_CODE_FOR_COUNTRY",
+	DELIVERY_INVALID_POSTAL_CODE_FOR_ZONE = "DELIVERY_INVALID_POSTAL_CODE_FOR_ZONE",
+	DELIVERY_LAST_NAME_INVALID = "DELIVERY_LAST_NAME_INVALID",
+	DELIVERY_LAST_NAME_REQUIRED = "DELIVERY_LAST_NAME_REQUIRED",
+	DELIVERY_LAST_NAME_TOO_LONG = "DELIVERY_LAST_NAME_TOO_LONG",
+	DELIVERY_NO_DELIVERY_AVAILABLE = "DELIVERY_NO_DELIVERY_AVAILABLE",
+	DELIVERY_NO_DELIVERY_AVAILABLE_FOR_MERCHANDISE_LINE = "DELIVERY_NO_DELIVERY_AVAILABLE_FOR_MERCHANDISE_LINE",
+	DELIVERY_OPTIONS_PHONE_NUMBER_INVALID = "DELIVERY_OPTIONS_PHONE_NUMBER_INVALID",
+	DELIVERY_OPTIONS_PHONE_NUMBER_REQUIRED = "DELIVERY_OPTIONS_PHONE_NUMBER_REQUIRED",
+	DELIVERY_PHONE_NUMBER_INVALID = "DELIVERY_PHONE_NUMBER_INVALID",
+	DELIVERY_PHONE_NUMBER_REQUIRED = "DELIVERY_PHONE_NUMBER_REQUIRED",
+	DELIVERY_POSTAL_CODE_INVALID = "DELIVERY_POSTAL_CODE_INVALID",
+	DELIVERY_POSTAL_CODE_REQUIRED = "DELIVERY_POSTAL_CODE_REQUIRED",
+	DELIVERY_ZONE_NOT_FOUND = "DELIVERY_ZONE_NOT_FOUND",
+	DELIVERY_ZONE_REQUIRED_FOR_COUNTRY = "DELIVERY_ZONE_REQUIRED_FOR_COUNTRY",
+	DELIVERY_ADDRESS_REQUIRED = "DELIVERY_ADDRESS_REQUIRED",
+	MERCHANDISE_NOT_APPLICABLE = "MERCHANDISE_NOT_APPLICABLE",
+	MERCHANDISE_LINE_LIMIT_REACHED = "MERCHANDISE_LINE_LIMIT_REACHED",
+	MERCHANDISE_NOT_ENOUGH_STOCK_AVAILABLE = "MERCHANDISE_NOT_ENOUGH_STOCK_AVAILABLE",
+	MERCHANDISE_OUT_OF_STOCK = "MERCHANDISE_OUT_OF_STOCK",
+	MERCHANDISE_PRODUCT_NOT_PUBLISHED = "MERCHANDISE_PRODUCT_NOT_PUBLISHED",
+	PAYMENTS_ADDRESS1_INVALID = "PAYMENTS_ADDRESS1_INVALID",
+	PAYMENTS_ADDRESS1_REQUIRED = "PAYMENTS_ADDRESS1_REQUIRED",
+	PAYMENTS_ADDRESS1_TOO_LONG = "PAYMENTS_ADDRESS1_TOO_LONG",
+	PAYMENTS_ADDRESS2_INVALID = "PAYMENTS_ADDRESS2_INVALID",
+	PAYMENTS_ADDRESS2_REQUIRED = "PAYMENTS_ADDRESS2_REQUIRED",
+	PAYMENTS_ADDRESS2_TOO_LONG = "PAYMENTS_ADDRESS2_TOO_LONG",
+	PAYMENTS_CITY_INVALID = "PAYMENTS_CITY_INVALID",
+	PAYMENTS_CITY_REQUIRED = "PAYMENTS_CITY_REQUIRED",
+	PAYMENTS_CITY_TOO_LONG = "PAYMENTS_CITY_TOO_LONG",
+	PAYMENTS_COMPANY_INVALID = "PAYMENTS_COMPANY_INVALID",
+	PAYMENTS_COMPANY_REQUIRED = "PAYMENTS_COMPANY_REQUIRED",
+	PAYMENTS_COMPANY_TOO_LONG = "PAYMENTS_COMPANY_TOO_LONG",
+	PAYMENTS_COUNTRY_REQUIRED = "PAYMENTS_COUNTRY_REQUIRED",
+	PAYMENTS_CREDIT_CARD_BASE_EXPIRED = "PAYMENTS_CREDIT_CARD_BASE_EXPIRED",
+	PAYMENTS_CREDIT_CARD_BASE_GATEWAY_NOT_SUPPORTED = "PAYMENTS_CREDIT_CARD_BASE_GATEWAY_NOT_SUPPORTED",
+	PAYMENTS_CREDIT_CARD_BASE_INVALID_START_DATE_OR_ISSUE_NUMBER_FOR_DEBIT = "PAYMENTS_CREDIT_CARD_BASE_INVALID_START_DATE_OR_ISSUE_NUMBER_FOR_DEBIT",
+	PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED = "PAYMENTS_CREDIT_CARD_BRAND_NOT_SUPPORTED",
+	PAYMENTS_CREDIT_CARD_FIRST_NAME_BLANK = "PAYMENTS_CREDIT_CARD_FIRST_NAME_BLANK",
+	PAYMENTS_CREDIT_CARD_GENERIC = "PAYMENTS_CREDIT_CARD_GENERIC",
+	PAYMENTS_CREDIT_CARD_LAST_NAME_BLANK = "PAYMENTS_CREDIT_CARD_LAST_NAME_BLANK",
+	PAYMENTS_CREDIT_CARD_MONTH_INCLUSION = "PAYMENTS_CREDIT_CARD_MONTH_INCLUSION",
+	PAYMENTS_CREDIT_CARD_NAME_INVALID = "PAYMENTS_CREDIT_CARD_NAME_INVALID",
+	PAYMENTS_CREDIT_CARD_NUMBER_INVALID = "PAYMENTS_CREDIT_CARD_NUMBER_INVALID",
+	PAYMENTS_CREDIT_CARD_NUMBER_INVALID_FORMAT = "PAYMENTS_CREDIT_CARD_NUMBER_INVALID_FORMAT",
+	PAYMENTS_CREDIT_CARD_SESSION_ID = "PAYMENTS_CREDIT_CARD_SESSION_ID",
+	PAYMENTS_CREDIT_CARD_VERIFICATION_VALUE_BLANK = "PAYMENTS_CREDIT_CARD_VERIFICATION_VALUE_BLANK",
+	PAYMENTS_CREDIT_CARD_VERIFICATION_VALUE_INVALID_FOR_CARD_TYPE = "PAYMENTS_CREDIT_CARD_VERIFICATION_VALUE_INVALID_FOR_CARD_TYPE",
+	PAYMENTS_CREDIT_CARD_YEAR_EXPIRED = "PAYMENTS_CREDIT_CARD_YEAR_EXPIRED",
+	PAYMENTS_CREDIT_CARD_YEAR_INVALID_EXPIRY_YEAR = "PAYMENTS_CREDIT_CARD_YEAR_INVALID_EXPIRY_YEAR",
+	PAYMENTS_FIRST_NAME_INVALID = "PAYMENTS_FIRST_NAME_INVALID",
+	PAYMENTS_FIRST_NAME_REQUIRED = "PAYMENTS_FIRST_NAME_REQUIRED",
+	PAYMENTS_FIRST_NAME_TOO_LONG = "PAYMENTS_FIRST_NAME_TOO_LONG",
+	PAYMENTS_INVALID_POSTAL_CODE_FOR_COUNTRY = "PAYMENTS_INVALID_POSTAL_CODE_FOR_COUNTRY",
+	PAYMENTS_INVALID_POSTAL_CODE_FOR_ZONE = "PAYMENTS_INVALID_POSTAL_CODE_FOR_ZONE",
+	PAYMENTS_LAST_NAME_INVALID = "PAYMENTS_LAST_NAME_INVALID",
+	PAYMENTS_LAST_NAME_REQUIRED = "PAYMENTS_LAST_NAME_REQUIRED",
+	PAYMENTS_LAST_NAME_TOO_LONG = "PAYMENTS_LAST_NAME_TOO_LONG",
+	PAYMENTS_METHOD_UNAVAILABLE = "PAYMENTS_METHOD_UNAVAILABLE",
+	PAYMENTS_METHOD_REQUIRED = "PAYMENTS_METHOD_REQUIRED",
+	PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT = "PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT",
+	PAYMENTS_PHONE_NUMBER_INVALID = "PAYMENTS_PHONE_NUMBER_INVALID",
+	PAYMENTS_PHONE_NUMBER_REQUIRED = "PAYMENTS_PHONE_NUMBER_REQUIRED",
+	PAYMENTS_POSTAL_CODE_INVALID = "PAYMENTS_POSTAL_CODE_INVALID",
+	PAYMENTS_POSTAL_CODE_REQUIRED = "PAYMENTS_POSTAL_CODE_REQUIRED",
+	PAYMENTS_SHOPIFY_PAYMENTS_REQUIRED = "PAYMENTS_SHOPIFY_PAYMENTS_REQUIRED",
+	PAYMENTS_WALLET_CONTENT_MISSING = "PAYMENTS_WALLET_CONTENT_MISSING",
+	PAYMENTS_BILLING_ADDRESS_ZONE_NOT_FOUND = "PAYMENTS_BILLING_ADDRESS_ZONE_NOT_FOUND",
+	PAYMENTS_BILLING_ADDRESS_ZONE_REQUIRED_FOR_COUNTRY = "PAYMENTS_BILLING_ADDRESS_ZONE_REQUIRED_FOR_COUNTRY",
+	TAXES_MUST_BE_DEFINED = "TAXES_MUST_BE_DEFINED",
+	TAXES_LINE_ID_NOT_FOUND = "TAXES_LINE_ID_NOT_FOUND",
+	TAXES_DELIVERY_GROUP_ID_NOT_FOUND = "TAXES_DELIVERY_GROUP_ID_NOT_FOUND"
 }
 /** The different kinds of order transactions. */
 export const enum TransactionKind {
@@ -16172,16 +20006,31 @@ export const enum WeightUnit {
 }
 
 type ZEUS_VARIABLES = {
+	["ApplePayWalletContentInput"]: ValueTypes["ApplePayWalletContentInput"];
+	["ApplePayWalletHeaderInput"]: ValueTypes["ApplePayWalletHeaderInput"];
 	["ArticleSortKeys"]: ValueTypes["ArticleSortKeys"];
 	["AttributeInput"]: ValueTypes["AttributeInput"];
 	["BlogSortKeys"]: ValueTypes["BlogSortKeys"];
+	["BuyerInput"]: ValueTypes["BuyerInput"];
 	["CardBrand"]: ValueTypes["CardBrand"];
 	["CartBuyerIdentityInput"]: ValueTypes["CartBuyerIdentityInput"];
+	["CartCardSource"]: ValueTypes["CartCardSource"];
+	["CartDeliveryCoordinatesPreferenceInput"]: ValueTypes["CartDeliveryCoordinatesPreferenceInput"];
+	["CartDeliveryGroupType"]: ValueTypes["CartDeliveryGroupType"];
+	["CartDeliveryPreferenceInput"]: ValueTypes["CartDeliveryPreferenceInput"];
+	["CartDirectPaymentMethodInput"]: ValueTypes["CartDirectPaymentMethodInput"];
 	["CartErrorCode"]: ValueTypes["CartErrorCode"];
+	["CartFreePaymentMethodInput"]: ValueTypes["CartFreePaymentMethodInput"];
 	["CartInput"]: ValueTypes["CartInput"];
+	["CartInputMetafieldInput"]: ValueTypes["CartInputMetafieldInput"];
 	["CartLineInput"]: ValueTypes["CartLineInput"];
 	["CartLineUpdateInput"]: ValueTypes["CartLineUpdateInput"];
+	["CartMetafieldDeleteInput"]: ValueTypes["CartMetafieldDeleteInput"];
+	["CartMetafieldsSetInput"]: ValueTypes["CartMetafieldsSetInput"];
+	["CartPaymentInput"]: ValueTypes["CartPaymentInput"];
+	["CartPreferencesInput"]: ValueTypes["CartPreferencesInput"];
 	["CartSelectedDeliveryOptionInput"]: ValueTypes["CartSelectedDeliveryOptionInput"];
+	["CartWalletPaymentMethodInput"]: ValueTypes["CartWalletPaymentMethodInput"];
 	["CheckoutAttributesUpdateV2Input"]: ValueTypes["CheckoutAttributesUpdateV2Input"];
 	["CheckoutBuyerIdentityInput"]: ValueTypes["CheckoutBuyerIdentityInput"];
 	["CheckoutCreateInput"]: ValueTypes["CheckoutCreateInput"];
@@ -16190,6 +20039,7 @@ type ZEUS_VARIABLES = {
 	["CheckoutLineItemUpdateInput"]: ValueTypes["CheckoutLineItemUpdateInput"];
 	["CollectionSortKeys"]: ValueTypes["CollectionSortKeys"];
 	["Color"]: ValueTypes["Color"];
+	["CompletionErrorCode"]: ValueTypes["CompletionErrorCode"];
 	["CountryCode"]: ValueTypes["CountryCode"];
 	["CreditCardPaymentInputV2"]: ValueTypes["CreditCardPaymentInputV2"];
 	["CropRegion"]: ValueTypes["CropRegion"];
@@ -16203,11 +20053,13 @@ type ZEUS_VARIABLES = {
 	["DateTime"]: ValueTypes["DateTime"];
 	["Decimal"]: ValueTypes["Decimal"];
 	["DeliveryAddressInput"]: ValueTypes["DeliveryAddressInput"];
+	["DeliveryAddressValidationStrategy"]: ValueTypes["DeliveryAddressValidationStrategy"];
 	["DeliveryMethodType"]: ValueTypes["DeliveryMethodType"];
 	["DigitalWallet"]: ValueTypes["DigitalWallet"];
 	["DiscountApplicationAllocationMethod"]: ValueTypes["DiscountApplicationAllocationMethod"];
 	["DiscountApplicationTargetSelection"]: ValueTypes["DiscountApplicationTargetSelection"];
 	["DiscountApplicationTargetType"]: ValueTypes["DiscountApplicationTargetType"];
+	["FilterPresentation"]: ValueTypes["FilterPresentation"];
 	["FilterType"]: ValueTypes["FilterType"];
 	["GeoCoordinateInput"]: ValueTypes["GeoCoordinateInput"];
 	["HTML"]: ValueTypes["HTML"];
@@ -16220,8 +20072,11 @@ type ZEUS_VARIABLES = {
 	["MailingAddressInput"]: ValueTypes["MailingAddressInput"];
 	["MediaContentType"]: ValueTypes["MediaContentType"];
 	["MediaHost"]: ValueTypes["MediaHost"];
+	["MediaPresentationFormat"]: ValueTypes["MediaPresentationFormat"];
 	["MenuItemType"]: ValueTypes["MenuItemType"];
+	["MetafieldDeleteErrorCode"]: ValueTypes["MetafieldDeleteErrorCode"];
 	["MetafieldFilter"]: ValueTypes["MetafieldFilter"];
+	["MetafieldsSetUserErrorCode"]: ValueTypes["MetafieldsSetUserErrorCode"];
 	["MetaobjectHandleInput"]: ValueTypes["MetaobjectHandleInput"];
 	["MoneyInput"]: ValueTypes["MoneyInput"];
 	["OrderCancelReason"]: ValueTypes["OrderCancelReason"];
@@ -16230,15 +20085,26 @@ type ZEUS_VARIABLES = {
 	["OrderSortKeys"]: ValueTypes["OrderSortKeys"];
 	["PageSortKeys"]: ValueTypes["PageSortKeys"];
 	["PaymentTokenType"]: ValueTypes["PaymentTokenType"];
+	["PredictiveSearchLimitScope"]: ValueTypes["PredictiveSearchLimitScope"];
+	["PredictiveSearchType"]: ValueTypes["PredictiveSearchType"];
+	["PreferenceDeliveryMethodType"]: ValueTypes["PreferenceDeliveryMethodType"];
 	["PriceRangeFilter"]: ValueTypes["PriceRangeFilter"];
 	["ProductCollectionSortKeys"]: ValueTypes["ProductCollectionSortKeys"];
 	["ProductFilter"]: ValueTypes["ProductFilter"];
 	["ProductImageSortKeys"]: ValueTypes["ProductImageSortKeys"];
 	["ProductMediaSortKeys"]: ValueTypes["ProductMediaSortKeys"];
+	["ProductRecommendationIntent"]: ValueTypes["ProductRecommendationIntent"];
 	["ProductSortKeys"]: ValueTypes["ProductSortKeys"];
 	["ProductVariantSortKeys"]: ValueTypes["ProductVariantSortKeys"];
+	["SearchPrefixQueryType"]: ValueTypes["SearchPrefixQueryType"];
+	["SearchSortKeys"]: ValueTypes["SearchSortKeys"];
+	["SearchType"]: ValueTypes["SearchType"];
+	["SearchUnavailableProductsType"]: ValueTypes["SearchUnavailableProductsType"];
+	["SearchableField"]: ValueTypes["SearchableField"];
 	["SelectedOptionInput"]: ValueTypes["SelectedOptionInput"];
 	["SellingPlanCheckoutChargeType"]: ValueTypes["SellingPlanCheckoutChargeType"];
+	["ShopPayWalletContentInput"]: ValueTypes["ShopPayWalletContentInput"];
+	["SubmissionErrorCode"]: ValueTypes["SubmissionErrorCode"];
 	["TokenizedPaymentInputV3"]: ValueTypes["TokenizedPaymentInputV3"];
 	["TransactionKind"]: ValueTypes["TransactionKind"];
 	["TransactionStatus"]: ValueTypes["TransactionStatus"];
